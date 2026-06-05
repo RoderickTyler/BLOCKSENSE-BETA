@@ -3301,30 +3301,21 @@ function resetEstimateValue(){
 // ════════════════════════════════════════════════════════════
 
 function _postalNorm(raw){
-  const d=raw.replace(/\D/g,'');
-  if(d.length<5||d.length>6)return null;
-  return d.padStart(6,'0');
+  const d=raw.replace(/[^0-9]/g,'');
+  if(d.length!==6)return null;
+  return d;
 }
 
-// Primary lookup: postalMap sheet data
-// Fallback: scan DB.resale directly for a matching block+street combo
-// This means it works even if postalMap hasn't loaded yet, as long as
-// the resale DB itself has the postal code indirectly via block/street/town.
+// Resolve postal → {block, street, town}
+// Tries postalMap first, then scans DB.resale directly as fallback
 function _postalResolve(postal){
-  // 1. Try postalMap (sheet-based, fastest)
   if(DB.postalMap[postal]) return DB.postalMap[postal];
-  // 2. Fallback: search resale records directly for block+street that
-  //    appear alongside this postal (some sheets store postal per row)
-  // (no-op if resale rows don't have a postal field — just returns null)
-  const hit = DB.resale.find(r=>{
-    const rp=(r.postal_code||r.postal||'').toString().replace(/\D/g,'').padStart(6,'0');
-    return rp===postal && (r.block||r.street_name);
+  // Fallback: resale rows may carry postal_code field
+  const hit=DB.resale.find(r=>{
+    const rp=(r.postal_code||r.postal||'').replace(/[^0-9]/g,'').padStart(6,'0');
+    return rp===postal&&(r.block||r.street_name);
   });
-  if(hit) return {
-    block: (hit.block||'').toUpperCase(),
-    street: (hit.street_name||'').toUpperCase(),
-    town: normalizeTown(hit.town)||hit.town||''
-  };
+  if(hit) return {block:(hit.block||'').toUpperCase(),street:(hit.street_name||'').toUpperCase(),town:normalizeTown(hit.town)||hit.town||''};
   return null;
 }
 
@@ -3337,93 +3328,77 @@ function _postalFb(fbId,clrId,type,msg){
   clr.style.display=(type==='ok'||type==='err')?'inline-block':'none';
 }
 
-// ── Core validation + resolve ────────────────────────────────
-// Returns match object or null; sets feedback on error.
-function _postalCheck(raw, fbId, clrId){
-  const digits=raw.replace(/\D/g,'');
-  if(!digits){
-    _postalFb(fbId,clrId,'hint','Optional — auto-fills Town, Street &amp; Block');
-    return null;
-  }
-  if(digits.length<6){
-    // Still typing — clear any previous error, stay silent
-    _postalFb(fbId,clrId,'hint','Optional — auto-fills Town, Street &amp; Block');
-    return null;
-  }
-  const postal=digits.padStart(6,'0');
-  if(!DB.loaded){
-    _postalFb(fbId,clrId,'hint','Still loading data — please wait…');
-    return null;
-  }
-  const m=_postalResolve(postal);
-  if(!m){
-    _postalFb(fbId,clrId,'err','Postal '+postal+' not found in HDB records');
-    return null;
-  }
-  return {postal,block:m.block,street:m.street,town:m.town};
-}
-
-// ── Transaction Search autofill ──────────────────────────────
+// ── Transaction Search: fill Town + Street + Block combos ────
 function postalFillSearch(raw){
   const fbId='srch-postal-fb', clrId='srch-postal-clr';
-  const m=_postalCheck(raw,fbId,clrId);
-  if(!m) return;
+  const digits=raw.replace(/[^0-9]/g,'');
 
-  // ── Town ──
-  // Uncheck all town checkboxes, then check the matching one
+  // Reset feedback while typing
+  if(digits.length<6){
+    _postalFb(fbId,clrId,'hint','Optional — auto-fills Town, Street &amp; Block');
+    return;
+  }
+
+  const postal=_postalNorm(raw);
+  if(!postal){_postalFb(fbId,clrId,'err','Enter exactly 6 digits');return;}
+  if(!DB.loaded){_postalFb(fbId,clrId,'hint','Still loading — please wait…');return;}
+
+  const m=_postalResolve(postal);
+  if(!m||!m.town){_postalFb(fbId,clrId,'err','Postal '+postal+' not found in HDB records');return;}
+
+  // ── STEP 1: Town ──────────────────────────────────────────
+  // Uncheck all towns, check the one we want
   document.querySelectorAll('#ms-town input[type=checkbox]:not(#ms-town-all)').forEach(cb=>{cb.checked=false;});
   const tCb=document.querySelector('#ms-town input[value="'+CSS.escape(m.town)+'"]');
   if(tCb) tCb.checked=true;
+  // Sync label, map, and combo tag
   updateTownLabel();
   syncMapFromDropdown();
-  // onTownChange builds allStreetOptions synchronously from DB.townStreets
-  onTownChange();
 
-  // ── Street ──
-  // buildStreetOptions / renderStreetOptions just did innerHTML — wait one
-  // animation frame for the browser to create the checkbox elements, then check.
-  requestAnimationFrame(()=>{
-    // First ensure the street exists in the rendered list; if not, force-build it
-    let sCb=document.querySelector('#ms-street-options input[value="'+CSS.escape(m.street)+'"]');
-    if(!sCb){
-      // Street not rendered yet (e.g. DB.townStreets missing this town) — build
-      // a minimal list from DB.resale so the checkbox definitely exists
-      const streetsFromResale=[...new Set(
-        DB.resale.filter(r=>r.town===m.town).map(r=>r.street_name).filter(Boolean)
-      )].sort();
-      buildStreetOptions(streetsFromResale);
-      sCb=document.querySelector('#ms-street-options input[value="'+CSS.escape(m.street)+'"]');
-    }
-    if(sCb){
-      // Uncheck any previous street selections, select only this one
-      document.querySelectorAll('#ms-street-options input[type=checkbox]').forEach(cb=>{cb.checked=false;});
-      sCb.checked=true;
-      renderComboTags('ms-street','street-combo-tags','street');
-      // onStreetChange rebuilds block list synchronously
-      onStreetChange();
+  // ── STEP 2: Build street list from DB directly ────────────
+  // Don't call onTownChange() — it would try to preserve prev selections
+  // and run cascade logic we don't want here.
+  // Instead, build streets directly from DB.resale for this town.
+  const streets=[...new Set(
+    DB.resale.filter(r=>r.town===m.town&&r.street_name).map(r=>r.street_name)
+  )].sort();
 
-      // ── Block ──
-      requestAnimationFrame(()=>{
-        let bCb=document.querySelector('#ms-block-options input[value="'+CSS.escape(m.block)+'"]');
-        if(!bCb){
-          // Force-build block list from resale for this street
-          const blocksFromResale=[...new Set(
-            DB.resale.filter(r=>r.street_name===m.street&&r.block).map(r=>r.block)
-          )].sort((a,b)=>isNaN(a)||isNaN(b)?a.localeCompare(b):Number(a)-Number(b));
-          buildBlockOptions(blocksFromResale);
-          bCb=document.querySelector('#ms-block-options input[value="'+CSS.escape(m.block)+'"]');
-        }
-        if(bCb){
-          document.querySelectorAll('#ms-block-options input[type=checkbox]').forEach(cb=>{cb.checked=false;});
-          bCb.checked=true;
-          renderComboTags('ms-block','block-combo-tags','block');
-          onBlockChange();
-        }
-        // Show street info hint
-        _refreshStreetInfo();
-      });
+  // Also merge from DB.townStreets if available
+  const tsStreets=DB.townStreets[m.town]||[];
+  const allStreets=[...new Set([...streets,...tsStreets])].sort();
+
+  buildStreetOptions(allStreets);  // renders checkboxes into #ms-street-options
+
+  // Clear any previous street/block tags
+  document.getElementById('street-combo-tags').innerHTML='';
+  document.getElementById('block-combo-tags').innerHTML='';
+
+  // ── STEP 3: Check the street ──────────────────────────────
+  const sCb=document.querySelector('#ms-street-options input[value="'+CSS.escape(m.street)+'"]');
+  if(sCb){
+    sCb.checked=true;
+    renderComboTags('ms-street','street-combo-tags','street');
+  }
+
+  // ── STEP 4: Build block list for this street from DB.resale ──
+  const blocks=[...new Set(
+    DB.resale.filter(r=>r.town===m.town&&r.street_name===m.street&&r.block).map(r=>r.block)
+  )].sort((a,b)=>isNaN(a)||isNaN(b)?a.localeCompare(b):Number(a)-Number(b));
+
+  buildBlockOptions(blocks);  // renders checkboxes into #ms-block-options
+
+  // ── STEP 5: Check the block ───────────────────────────────
+  if(m.block){
+    const bCb=document.querySelector('#ms-block-options input[value="'+CSS.escape(m.block)+'"]');
+    if(bCb){
+      bCb.checked=true;
+      renderComboTags('ms-block','block-combo-tags','block');
     }
-  });
+  }
+
+  // Refresh the storey filter + street info hint
+  _refreshStoreyFromBlocks();
+  _refreshStreetInfo();
 
   _postalFb(fbId,clrId,'ok','&#x2705; <strong>'+m.block+' '+m.street+'</strong>, '+m.town);
 }
@@ -3434,57 +3409,67 @@ function postalClearSearch(){
   _postalFb('srch-postal-fb','srch-postal-clr','hint','Optional — auto-fills Town, Street &amp; Block');
 }
 
-// ── Estimated Value autofill ─────────────────────────────────
+// ── Estimated Value: fill Town + Street + Block selects ──────
 function postalFillEV(raw){
   const fbId='ev-postal-fb', clrId='ev-postal-clr';
-  const m=_postalCheck(raw,fbId,clrId);
-  if(!m) return;
+  const digits=raw.replace(/[^0-9]/g,'');
 
-  // ── Town ──
+  if(digits.length<6){
+    _postalFb(fbId,clrId,'hint','Optional — auto-fills Town, Street &amp; Block');
+    return;
+  }
+
+  const postal=_postalNorm(raw);
+  if(!postal){_postalFb(fbId,clrId,'err','Enter exactly 6 digits');return;}
+  if(!DB.loaded){_postalFb(fbId,clrId,'hint','Still loading — please wait…');return;}
+
+  const m=_postalResolve(postal);
+  if(!m||!m.town){_postalFb(fbId,clrId,'err','Postal '+postal+' not found in HDB records');return;}
+
+  // ── STEP 1: Town <select> ────────────────────────────────
   const tSel=document.getElementById('ev-town');
   tSel.value=m.town;
-  // evOnTownChange builds the street <select> options synchronously
-  evOnTownChange();
+  // Clear error highlight
+  tSel.classList.remove('ev-field-error');
+  document.getElementById('ev-err-town').style.display='none';
 
-  // ── Street ──
-  requestAnimationFrame(()=>{
-    const sSel=document.getElementById('ev-street');
-    let sOpt=[...sSel.options].find(o=>o.value===m.street);
-    if(!sOpt){
-      // Street not in dropdown — rebuild it directly from DB.resale
-      const streets=[...new Set(
-        DB.resale.filter(r=>r.town===m.town).map(r=>r.street_name).filter(Boolean)
-      )].sort();
-      sSel.innerHTML='<option value="">— Select street —</option>'+
-        streets.map(s=>'<option value="'+s+'">'+s+'</option>').join('');
-      sOpt=[...sSel.options].find(o=>o.value===m.street);
-    }
-    if(sOpt){
-      sSel.value=sOpt.value;
-      // evOnStreetChange builds the block <select> options synchronously
-      evOnStreetChange();
+  // ── STEP 2: Build street <options> directly from DB.resale ─
+  // Don't rely on evOnTownChange()'s async-ish behaviour.
+  const streets=[...new Set(
+    DB.resale.filter(r=>r.town===m.town&&r.street_name).map(r=>r.street_name)
+  )].sort();
+  const tsStreets=DB.townStreets[m.town]||[];
+  const allStreets=[...new Set([...streets,...tsStreets])].sort();
 
-      // ── Block ──
-      requestAnimationFrame(()=>{
-        const bSel=document.getElementById('ev-block');
-        let bOpt=[...bSel.options].find(o=>o.value===m.block);
-        if(!bOpt){
-          // Block not in dropdown — rebuild from DB.resale
-          const blocks=[...new Set(
-            DB.resale.filter(r=>r.street_name===m.street&&r.block).map(r=>r.block)
-          )].sort((a,b)=>isNaN(a)||isNaN(b)?a.localeCompare(b):Number(a)-Number(b));
-          bSel.innerHTML='<option value="">— Select block —</option>'+
-            blocks.map(b=>'<option value="'+b+'">'+b+'</option>').join('');
-          bOpt=[...bSel.options].find(o=>o.value===m.block);
-        }
-        if(bOpt){
-          bSel.value=bOpt.value;
-          // evOnBlockChange populates floor/size/lease dropdowns
-          evOnBlockChange();
-        }
-      });
-    }
-  });
+  const sSel=document.getElementById('ev-street');
+  sSel.innerHTML='<option value="">— Select street —</option>'+
+    allStreets.map(s=>'<option value="'+s+'">'+s+'</option>').join('');
+
+  // ── STEP 3: Set the street value ─────────────────────────
+  sSel.value=m.street;
+  sSel.classList.remove('ev-field-error');
+  document.getElementById('ev-err-street').style.display='none';
+
+  // ── STEP 4: Build block <options> from DB.resale ─────────
+  const blocks=[...new Set(
+    DB.resale.filter(r=>r.town===m.town&&r.street_name===m.street&&r.block).map(r=>r.block)
+  )].sort((a,b)=>isNaN(a)||isNaN(b)?a.localeCompare(b):Number(a)-Number(b));
+
+  const bSel=document.getElementById('ev-block');
+  bSel.innerHTML='<option value="">— Select block —</option>'+
+    blocks.map(b=>'<option value="'+b+'">'+b+'</option>').join('');
+
+  // ── STEP 5: Set the block value ──────────────────────────
+  if(m.block){
+    bSel.value=m.block;
+    bSel.classList.remove('ev-field-error');
+    document.getElementById('ev-err-block').style.display='none';
+    // Trigger floor/size/lease population
+    evOnBlockChange();
+  }
+
+  // Also populate lease years from street level
+  evPopulateLeaseYears(m.town, m.street, m.block);
 
   _postalFb(fbId,clrId,'ok','&#x2705; <strong>'+m.block+' '+m.street+'</strong>, '+m.town);
 }
