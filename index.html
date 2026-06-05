@@ -1347,9 +1347,20 @@ async function _loadPostalBg(){
     const pKey=findCol(['postal_code','postal','postcode','post_code','postalcode','postal code','zip','zipcode']);
     const bKey=findCol(['block','blk','block_no','blk_no','blk no','block no','block number','bldg_no']);
     const sKey=findCol(['street_name','street','street_nm','road_name','road','street name','streetname','address']);
-    const tKey=findCol(['town','town_name','town_code','hdb_town','towncode','town code','hdb town','planning_area']);
+    // Try name-based match first, then auto-detect by scanning row values with normalizeTown
+    let tKey=findCol(['town','town_name','town_code','hdb_town','towncode','town code','hdb town',
+                      'planning_area','twncd','twn_code','town cd','hdb_town_code']);
+    if(!tKey){
+      // Auto-detect: find the column whose value in row 0 normalizeTown() can resolve
+      tKey=hdr.find(h=>{
+        const v=(rows[0][h]||'').toString().trim();
+        return v && normalizeTown(v)!==null;
+      })||null;
+      if(tKey) console.log('[Postal] Town column auto-detected:',tKey,'value:',rows[0][tKey]);
+    }
 
     console.log('[Postal] Columns mapped — postal:'+pKey+' block:'+bKey+' street:'+sKey+' town:'+tKey);
+    if(!tKey) console.warn('[Postal] Town column NOT found — full headers:',hdr);
 
     if(!pKey){
       console.warn('[Postal] Cannot find postal code column. Available headers: '+hdr.join(' | '));
@@ -1372,6 +1383,7 @@ async function _loadPostalBg(){
       const street=sKey?(row[sKey]||'').toString().trim().toUpperCase():'';
       const tRaw  =tKey?(row[tKey]||'').toString().trim():'';
       // normalizeTown handles short codes (AMK, BD, BH…) AND full names
+      // If town is empty/unmapped, leave blank for now — we resolve it at lookup time from DB.resale
       const town  =normalizeTown(tRaw)||tRaw.toUpperCase();
 
       if(blk||street){
@@ -3344,30 +3356,24 @@ function _postalNorm(raw){
 // Resolve postal → {block, street, town}
 // Tries postalMap first, then scans DB.resale directly as fallback
 function _postalResolve(postal){
-  // 1. postalMap (from hdb_with_postalcodes sheet)
-  if(DB.postalMap[postal]){
-    console.log('[PostalLookup] Found in postalMap:',postal,'->',JSON.stringify(DB.postalMap[postal]));
-    return DB.postalMap[postal];
+  // Step 1: get block + street from postalMap (hdb_with_postalcodes sheet)
+  const entry=DB.postalMap[postal];
+  if(!entry){
+    const mapSize=Object.keys(DB.postalMap).length;
+    console.warn('[PostalLookup] '+postal+' not found. Map has '+mapSize+' entries.');
+    return null;
   }
-  // 2. Fallback: scan resale rows for a postal_code field
-  const hit=DB.resale.find(r=>{
-    const rp=(r.postal_code||r.postal||'').replace(/[^0-9]/g,'').padStart(6,'0');
-    return rp===postal&&(r.block||r.street_name);
-  });
-  if(hit){
-    console.log('[PostalLookup] Found in resale fallback:',postal);
-    return {block:(hit.block||'').toUpperCase(),street:(hit.street_name||'').toUpperCase(),town:normalizeTown(hit.town)||hit.town||''};
+  // Step 2: derive town by matching street against DB.townStreets
+  // DB.townStreets = { "CLEMENTI": ["CLEMENTI WEST ST 1", ...], ... }
+  if(!entry.town && entry.street){
+    const street=entry.street.toUpperCase();
+    const town=Object.keys(DB.townStreets).find(t=>
+      (DB.townStreets[t]||[]).some(s=>s.toUpperCase()===street)
+    )||'';
+    entry.town=town;
   }
-  // 3. Not found — log map size to help debug
-  const mapSize=Object.keys(DB.postalMap).length;
-  console.warn('[PostalLookup] '+postal+' not found. postalMap has '+mapSize+' entries.');
-  if(mapSize>0){
-    // Log a few nearby keys so we can see the format
-    const keys=Object.keys(DB.postalMap).sort();
-    const nearby=keys.filter(k=>k.slice(0,3)===postal.slice(0,3)).slice(0,5);
-    if(nearby.length) console.warn('[PostalLookup] Same prefix entries:',nearby);
-  }
-  return null;
+  console.log('[PostalLookup] Hit:',postal,'->',JSON.stringify(entry));
+  return entry;
 }
 
 function _postalFb(fbId,clrId,type,msg){
