@@ -1332,16 +1332,22 @@ async function _loadPostalBg(){
       // and may land in the empty-header column ("") instead of blk_no.
       // Strategy: try bKey first, then scan every non-postal/non-street column
       // for a value matching the block pattern (digits + optional trailing letters).
-      const blockPattern=/^[0-9]+[A-Z]*$/;
+      // Block extraction:
+      // Numeric blocks are in blk_no (e.g. "96")
+      // Alphanumeric blocks (e.g. "96A") have blk_no="" — extract from BLOCKNUMBER_N_STREETNAME
+      // by stripping the street name off the front of the full address value.
       let blk=(row[bKey]||'').toString().trim().toUpperCase();
       if(!blk){
-        for(const k of hdr){
-          if(k===pKey||k===sKey)continue;
-          const v=(row[k]||'').toString().trim().toUpperCase();
-          if(v&&blockPattern.test(v)){blk=v;break;}
+        const fullAddr=(row['BLOCKNUMBER_N_STREETNAME']||'').toString().trim().toUpperCase();
+        const streetUp=(row[sKey]||'').toString().trim().toUpperCase();
+        if(fullAddr&&streetUp&&fullAddr.endsWith(streetUp)){
+          // Remove street from end, trim to get block
+          blk=fullAddr.slice(0,fullAddr.length-streetUp.length).trim();
+        } else if(fullAddr){
+          // Fallback: first word of full address is the block
+          blk=fullAddr.split(' ')[0].trim();
         }
       }
-      if(rawP==='151096') console.log('[DEBUG 151096] blk_no="'+(row[bKey]||'')+'" emptyCol="'+(row['']||'')+'" blk result="'+blk+'" ALL:',JSON.stringify(row));
       // Street: uppercase for consistent matching
       const street=(row[sKey]||'').toString().trim().toUpperCase();
       if(blk||street){DB.postalMap[postal]={block:blk,street};n++;}
