@@ -3301,62 +3301,126 @@ function resetEstimateValue(){
 // ════════════════════════════════════════════════════════════
 
 function _postalNorm(raw){
-  // Returns zero-padded 6-digit string, or null if input isn't 5-6 digits
   const d=raw.replace(/\D/g,'');
   if(d.length<5||d.length>6)return null;
   return d.padStart(6,'0');
 }
 
-function _postalLookup(postal){
-  return DB.postalMap[postal]||null;
+// Primary lookup: postalMap sheet data
+// Fallback: scan DB.resale directly for a matching block+street combo
+// This means it works even if postalMap hasn't loaded yet, as long as
+// the resale DB itself has the postal code indirectly via block/street/town.
+function _postalResolve(postal){
+  // 1. Try postalMap (sheet-based, fastest)
+  if(DB.postalMap[postal]) return DB.postalMap[postal];
+  // 2. Fallback: search resale records directly for block+street that
+  //    appear alongside this postal (some sheets store postal per row)
+  // (no-op if resale rows don't have a postal field — just returns null)
+  const hit = DB.resale.find(r=>{
+    const rp=(r.postal_code||r.postal||'').toString().replace(/\D/g,'').padStart(6,'0');
+    return rp===postal && (r.block||r.street_name);
+  });
+  if(hit) return {
+    block: (hit.block||'').toUpperCase(),
+    street: (hit.street_name||'').toUpperCase(),
+    town: normalizeTown(hit.town)||hit.town||''
+  };
+  return null;
 }
 
-// ── Shared fill feedback helper ──────────────────────────────
 function _postalFb(fbId,clrId,type,msg){
   const fb=document.getElementById(fbId);
   const clr=document.getElementById(clrId);
+  if(!fb)return;
   fb.className='postal-fb '+type;
   fb.innerHTML=msg;
   clr.style.display=(type==='ok'||type==='err')?'inline-block':'none';
 }
 
+// ── Core validation + resolve ────────────────────────────────
+// Returns match object or null; sets feedback on error.
+function _postalCheck(raw, fbId, clrId){
+  const digits=raw.replace(/\D/g,'');
+  if(!digits){
+    _postalFb(fbId,clrId,'hint','Optional — auto-fills Town, Street &amp; Block');
+    return null;
+  }
+  if(digits.length<6){
+    // Still typing — clear any previous error, stay silent
+    _postalFb(fbId,clrId,'hint','Optional — auto-fills Town, Street &amp; Block');
+    return null;
+  }
+  const postal=digits.padStart(6,'0');
+  if(!DB.loaded){
+    _postalFb(fbId,clrId,'hint','Still loading data — please wait…');
+    return null;
+  }
+  const m=_postalResolve(postal);
+  if(!m){
+    _postalFb(fbId,clrId,'err','Postal '+postal+' not found in HDB records');
+    return null;
+  }
+  return {postal,block:m.block,street:m.street,town:m.town};
+}
+
 // ── Transaction Search autofill ──────────────────────────────
 function postalFillSearch(raw){
   const fbId='srch-postal-fb', clrId='srch-postal-clr';
-  if(!raw.replace(/\D/g,'')){_postalFb(fbId,clrId,'hint','Optional — auto-fills Town, Street &amp; Block');return;}
-  const postal=_postalNorm(raw);
-  if(!postal){_postalFb(fbId,clrId,'err','Enter a 5 or 6-digit postal code');return;}
-  if(!DB.loaded){_postalFb(fbId,clrId,'hint','Still loading data…');return;}
-  if(raw.replace(/\D/g,'').length<6)return; // wait for full 6 digits before looking up
-  if(!Object.keys(DB.postalMap).length){_postalFb(fbId,clrId,'hint','Postal database loading — try again shortly');return;}
-  const m=_postalLookup(postal);
-  if(!m){_postalFb(fbId,clrId,'err','Postal '+postal+' not found in HDB records');return;}
+  const m=_postalCheck(raw,fbId,clrId);
+  if(!m) return;
 
-  // Step 1 — town checkbox
+  // ── Town ──
+  // Uncheck all town checkboxes, then check the matching one
   document.querySelectorAll('#ms-town input[type=checkbox]:not(#ms-town-all)').forEach(cb=>{cb.checked=false;});
   const tCb=document.querySelector('#ms-town input[value="'+CSS.escape(m.town)+'"]');
-  if(tCb)tCb.checked=true;
-  updateTownLabel();syncMapFromDropdown();onTownChange();
+  if(tCb) tCb.checked=true;
+  updateTownLabel();
+  syncMapFromDropdown();
+  // onTownChange builds allStreetOptions synchronously from DB.townStreets
+  onTownChange();
 
-  // Step 2 — street (onTownChange builds street list synchronously from DB.townStreets)
+  // ── Street ──
+  // buildStreetOptions / renderStreetOptions just did innerHTML — wait one
+  // animation frame for the browser to create the checkbox elements, then check.
   requestAnimationFrame(()=>{
-    const sCb=[...document.querySelectorAll('#ms-street-options input[type=checkbox]')]
-      .find(cb=>cb.value===m.street);
+    // First ensure the street exists in the rendered list; if not, force-build it
+    let sCb=document.querySelector('#ms-street-options input[value="'+CSS.escape(m.street)+'"]');
+    if(!sCb){
+      // Street not rendered yet (e.g. DB.townStreets missing this town) — build
+      // a minimal list from DB.resale so the checkbox definitely exists
+      const streetsFromResale=[...new Set(
+        DB.resale.filter(r=>r.town===m.town).map(r=>r.street_name).filter(Boolean)
+      )].sort();
+      buildStreetOptions(streetsFromResale);
+      sCb=document.querySelector('#ms-street-options input[value="'+CSS.escape(m.street)+'"]');
+    }
     if(sCb){
+      // Uncheck any previous street selections, select only this one
       document.querySelectorAll('#ms-street-options input[type=checkbox]').forEach(cb=>{cb.checked=false;});
       sCb.checked=true;
       renderComboTags('ms-street','street-combo-tags','street');
+      // onStreetChange rebuilds block list synchronously
       onStreetChange();
-      // Step 3 — block (onStreetChange rebuilds block list synchronously)
+
+      // ── Block ──
       requestAnimationFrame(()=>{
-        const bCb=[...document.querySelectorAll('#ms-block-options input[type=checkbox]')]
-          .find(cb=>cb.value===m.block);
+        let bCb=document.querySelector('#ms-block-options input[value="'+CSS.escape(m.block)+'"]');
+        if(!bCb){
+          // Force-build block list from resale for this street
+          const blocksFromResale=[...new Set(
+            DB.resale.filter(r=>r.street_name===m.street&&r.block).map(r=>r.block)
+          )].sort((a,b)=>isNaN(a)||isNaN(b)?a.localeCompare(b):Number(a)-Number(b));
+          buildBlockOptions(blocksFromResale);
+          bCb=document.querySelector('#ms-block-options input[value="'+CSS.escape(m.block)+'"]');
+        }
         if(bCb){
           document.querySelectorAll('#ms-block-options input[type=checkbox]').forEach(cb=>{cb.checked=false;});
           bCb.checked=true;
           renderComboTags('ms-block','block-combo-tags','block');
           onBlockChange();
         }
+        // Show street info hint
+        _refreshStreetInfo();
       });
     }
   });
@@ -3365,41 +3429,58 @@ function postalFillSearch(raw){
 }
 
 function postalClearSearch(){
-  document.getElementById('srch-postal-input').value='';
+  const inp=document.getElementById('srch-postal-input');
+  if(inp) inp.value='';
   _postalFb('srch-postal-fb','srch-postal-clr','hint','Optional — auto-fills Town, Street &amp; Block');
 }
 
 // ── Estimated Value autofill ─────────────────────────────────
 function postalFillEV(raw){
   const fbId='ev-postal-fb', clrId='ev-postal-clr';
-  if(!raw.replace(/\D/g,'')){_postalFb(fbId,clrId,'hint','Optional — auto-fills Town, Street &amp; Block');return;}
-  const postal=_postalNorm(raw);
-  if(!postal){_postalFb(fbId,clrId,'err','Enter a 5 or 6-digit postal code');return;}
-  if(!DB.loaded){_postalFb(fbId,clrId,'hint','Still loading data…');return;}
-  if(raw.replace(/\D/g,'').length<6)return; // wait for full 6 digits
-  if(!Object.keys(DB.postalMap).length){_postalFb(fbId,clrId,'hint','Postal database loading — try again shortly');return;}
-  const m=_postalLookup(postal);
-  if(!m){_postalFb(fbId,clrId,'err','Postal '+postal+' not found in HDB records');return;}
+  const m=_postalCheck(raw,fbId,clrId);
+  if(!m) return;
 
-  // Step 1 — town
+  // ── Town ──
   const tSel=document.getElementById('ev-town');
   tSel.value=m.town;
-  evOnTownChange(); // builds street <option> list synchronously
+  // evOnTownChange builds the street <select> options synchronously
+  evOnTownChange();
 
-  // Step 2 — street
+  // ── Street ──
   requestAnimationFrame(()=>{
     const sSel=document.getElementById('ev-street');
-    const sOpt=[...sSel.options].find(o=>o.value===m.street);
+    let sOpt=[...sSel.options].find(o=>o.value===m.street);
+    if(!sOpt){
+      // Street not in dropdown — rebuild it directly from DB.resale
+      const streets=[...new Set(
+        DB.resale.filter(r=>r.town===m.town).map(r=>r.street_name).filter(Boolean)
+      )].sort();
+      sSel.innerHTML='<option value="">— Select street —</option>'+
+        streets.map(s=>'<option value="'+s+'">'+s+'</option>').join('');
+      sOpt=[...sSel.options].find(o=>o.value===m.street);
+    }
     if(sOpt){
       sSel.value=sOpt.value;
-      evOnStreetChange(); // builds block <option> list synchronously
-      // Step 3 — block
+      // evOnStreetChange builds the block <select> options synchronously
+      evOnStreetChange();
+
+      // ── Block ──
       requestAnimationFrame(()=>{
         const bSel=document.getElementById('ev-block');
-        const bOpt=[...bSel.options].find(o=>o.value===m.block);
+        let bOpt=[...bSel.options].find(o=>o.value===m.block);
+        if(!bOpt){
+          // Block not in dropdown — rebuild from DB.resale
+          const blocks=[...new Set(
+            DB.resale.filter(r=>r.street_name===m.street&&r.block).map(r=>r.block)
+          )].sort((a,b)=>isNaN(a)||isNaN(b)?a.localeCompare(b):Number(a)-Number(b));
+          bSel.innerHTML='<option value="">— Select block —</option>'+
+            blocks.map(b=>'<option value="'+b+'">'+b+'</option>').join('');
+          bOpt=[...bSel.options].find(o=>o.value===m.block);
+        }
         if(bOpt){
           bSel.value=bOpt.value;
-          evOnBlockChange(); // populates floor/size/lease dropdowns
+          // evOnBlockChange populates floor/size/lease dropdowns
+          evOnBlockChange();
         }
       });
     }
@@ -3410,7 +3491,7 @@ function postalFillEV(raw){
 
 function postalClearEV(){
   const inp=document.getElementById('ev-postal-input');
-  if(inp)inp.value='';
+  if(inp) inp.value='';
   _postalFb('ev-postal-fb','ev-postal-clr','hint','Optional — auto-fills Town, Street &amp; Block');
 }
 
