@@ -3430,23 +3430,32 @@ function postalFillSearch(raw){
   document.getElementById('street-combo-tags').innerHTML='';
   document.getElementById('block-combo-tags').innerHTML='';
 
-  // ── STEP 3: Check the street ──────────────────────────────
-  const sCb=document.querySelector('#ms-street-options input[value="'+CSS.escape(m.street)+'"]');
+  // ── STEP 3: Check the street (case-insensitive) ─────────
+  const streetUpperS2=m.street.toUpperCase();
+  const sCb=[...document.querySelectorAll('#ms-street-options input[type=checkbox]')]
+    .find(cb=>cb.value.toUpperCase()===streetUpperS2);
   if(sCb){
     sCb.checked=true;
     renderComboTags('ms-street','street-combo-tags','street');
   }
 
   // ── STEP 4: Build block list for this street from DB.resale ──
-  const blocks=[...new Set(
-    DB.resale.filter(r=>r.town===m.town&&r.street_name===m.street&&r.block).map(r=>r.block)
+  const streetUpperS=m.street.toUpperCase();
+  const blocksS=[...new Set(
+    DB.resale.filter(r=>
+      r.town===m.town &&
+      r.street_name&&r.street_name.toUpperCase()===streetUpperS &&
+      r.block
+    ).map(r=>r.block)
   )].sort((a,b)=>isNaN(a)||isNaN(b)?a.localeCompare(b):Number(a)-Number(b));
 
-  buildBlockOptions(blocks);  // renders checkboxes into #ms-block-options
+  buildBlockOptions(blocksS);  // renders checkboxes into #ms-block-options
 
-  // ── STEP 5: Check the block ───────────────────────────────
+  // ── STEP 5: Check the block (case-insensitive) ────────────
   if(m.block){
-    const bCb=document.querySelector('#ms-block-options input[value="'+CSS.escape(m.block)+'"]');
+    const blockUpperS=m.block.toUpperCase();
+    const bCb=[...document.querySelectorAll('#ms-block-options input[type=checkbox]')]
+      .find(cb=>cb.value.toUpperCase()===blockUpperS);
     if(bCb){
       bCb.checked=true;
       renderComboTags('ms-block','block-combo-tags','block');
@@ -3490,39 +3499,57 @@ function postalFillEV(raw){
   tSel.classList.remove('ev-field-error');
   document.getElementById('ev-err-town').style.display='none';
 
-  // ── STEP 2: Build street <options> directly from DB.resale ─
-  // Don't rely on evOnTownChange()'s async-ish behaviour.
-  const streets=[...new Set(
-    DB.resale.filter(r=>r.town===m.town&&r.street_name).map(r=>r.street_name)
-  )].sort();
+  // ── STEP 2: Build street <options> directly from townStreets + resale ─
   const tsStreets=DB.townStreets[m.town]||[];
-  const allStreets=[...new Set([...streets,...tsStreets])].sort();
+  const resaleStreets=[...new Set(
+    DB.resale.filter(r=>r.town===m.town&&r.street_name).map(r=>r.street_name)
+  )];
+  const allStreets=[...new Set([...tsStreets,...resaleStreets])].sort();
 
   const sSel=document.getElementById('ev-street');
   sSel.innerHTML='<option value="">— Select street —</option>'+
     allStreets.map(s=>'<option value="'+s+'">'+s+'</option>').join('');
 
-  // ── STEP 3: Set the street value ─────────────────────────
-  sSel.value=m.street;
-  sSel.classList.remove('ev-field-error');
-  document.getElementById('ev-err-street').style.display='none';
+  // ── STEP 3: Set the street value (case-insensitive match) ─
+  const streetUpper=m.street.toUpperCase();
+  const matchedStreetOpt=[...sSel.options].find(o=>o.value.toUpperCase()===streetUpper);
+  if(matchedStreetOpt){
+    sSel.value=matchedStreetOpt.value;
+    sSel.classList.remove('ev-field-error');
+    document.getElementById('ev-err-street').style.display='none';
+  }
 
   // ── STEP 4: Build block <options> from DB.resale ─────────
+  // Use case-insensitive street match — postal sheet stores uppercase,
+  // resale DB may differ in casing
+  const streetUpperB=m.street.toUpperCase();
   const blocks=[...new Set(
-    DB.resale.filter(r=>r.town===m.town&&r.street_name===m.street&&r.block).map(r=>r.block)
+    DB.resale.filter(r=>
+      r.town===m.town &&
+      r.street_name&&r.street_name.toUpperCase()===streetUpperB &&
+      r.block
+    ).map(r=>r.block)
   )].sort((a,b)=>isNaN(a)||isNaN(b)?a.localeCompare(b):Number(a)-Number(b));
+
+  console.log('[PostalFillEV] block from postal:',m.block,'blocks from resale:',blocks);
 
   const bSel=document.getElementById('ev-block');
   bSel.innerHTML='<option value="">— Select block —</option>'+
     blocks.map(b=>'<option value="'+b+'">'+b+'</option>').join('');
 
   // ── STEP 5: Set the block value ──────────────────────────
+  // Match case-insensitively: postal block may differ in case from resale block
   if(m.block){
-    bSel.value=m.block;
-    bSel.classList.remove('ev-field-error');
-    document.getElementById('ev-err-block').style.display='none';
-    // Trigger floor/size/lease population
-    evOnBlockChange();
+    const blockUpper=m.block.toUpperCase();
+    const matchedOpt=[...bSel.options].find(o=>o.value.toUpperCase()===blockUpper);
+    if(matchedOpt){
+      bSel.value=matchedOpt.value;
+      bSel.classList.remove('ev-field-error');
+      document.getElementById('ev-err-block').style.display='none';
+      evOnBlockChange();
+    } else {
+      console.warn('[PostalFillEV] block "'+m.block+'" not found in options:',blocks);
+    }
   }
 
   // Also populate lease years from street level
