@@ -1341,6 +1341,7 @@ async function _loadPostalBg(){
           if(v&&blockPattern.test(v)){blk=v;break;}
         }
       }
+      if(rawP==='151096') console.log('[DEBUG 151096] blk_no="'+(row[bKey]||'')+'" emptyCol="'+(row['']||'')+'" blk result="'+blk+'" ALL:',JSON.stringify(row));
       // Street: uppercase for consistent matching
       const street=(row[sKey]||'').toString().trim().toUpperCase();
       if(blk||street){DB.postalMap[postal]={block:blk,street};n++;}
