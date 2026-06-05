@@ -1321,14 +1321,27 @@ async function _loadPostalBg(){
     rows.forEach(row=>{
       const rawP=(row[pKey]||'').toString().trim();
       if(!rawP)return;
+
       // Postal: digits only, zero-pad to 6
       const digits=rawP.replace(/[^0-9]/g,'');
       if(!digits||digits.length>6)return;
       const postal=digits.padStart(6,'0');
       if(postal==='000000')return;
-      // Block: keep as-is including letters (96A, 96B, 958A etc.)
-      const blk=(row[bKey]||'').toString().trim().toUpperCase();
-      // Street: uppercase for matching
+      // Block: numeric blocks land in bKey (blk_no) as right-aligned numbers.
+      // Alphanumeric blocks (96A, 954B, 958A etc.) are left-aligned text in Excel
+      // and may land in the empty-header column ("") instead of blk_no.
+      // Strategy: try bKey first, then scan every non-postal/non-street column
+      // for a value matching the block pattern (digits + optional trailing letters).
+      const blockPattern=/^[0-9]+[A-Z]*$/;
+      let blk=(row[bKey]||'').toString().trim().toUpperCase();
+      if(!blk){
+        for(const k of hdr){
+          if(k===pKey||k===sKey)continue;
+          const v=(row[k]||'').toString().trim().toUpperCase();
+          if(v&&blockPattern.test(v)){blk=v;break;}
+        }
+      }
+      // Street: uppercase for consistent matching
       const street=(row[sKey]||'').toString().trim().toUpperCase();
       if(blk||street){DB.postalMap[postal]={block:blk,street};n++;}
     });
@@ -3290,7 +3303,7 @@ function _postalResolve(postal){
     console.warn('[Postal] '+postal+' not found. Map size:',Object.keys(DB.postalMap).length);
     return null;
   }
-  console.log('[Postal] Raw entry for '+postal+':',JSON.stringify(entry));
+
   const streetUp=(entry.street||'').toUpperCase();
   // 1. Try exact match against DB.townStreets
   let town=Object.keys(DB.townStreets).find(t=>
