@@ -3290,11 +3290,20 @@ function _postalResolve(postal){
     console.warn('[Postal] '+postal+' not found. Map size:',Object.keys(DB.postalMap).length);
     return null;
   }
-  // Derive town by matching street against DB.townStreets
+  console.log('[Postal] Raw entry for '+postal+':',JSON.stringify(entry));
   const streetUp=(entry.street||'').toUpperCase();
-  const town=Object.keys(DB.townStreets).find(t=>
+  // 1. Try exact match against DB.townStreets
+  let town=Object.keys(DB.townStreets).find(t=>
     (DB.townStreets[t]||[]).some(s=>s.toUpperCase()===streetUp)
   )||'';
+  // 2. If no match, try DB.resale — street names there match the resale data exactly
+  if(!town){
+    const hit=DB.resale.find(r=>r.street_name&&r.street_name.toUpperCase()===streetUp&&r.town);
+    if(hit) town=hit.town;
+    if(town) console.log('[Postal] Town from resale for street "'+entry.street+'":',town);
+    else console.warn('[Postal] No town found for street "'+entry.street+'" — townStreets sample:',
+      Object.values(DB.townStreets).flat().filter(s=>s.toUpperCase().includes(streetUp.slice(0,6))).slice(0,5));
+  }
   return {block:entry.block,street:entry.street,town};
 }
 
