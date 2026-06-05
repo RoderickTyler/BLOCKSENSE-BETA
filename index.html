@@ -1305,9 +1305,17 @@ async function _loadPostalBg(){
     console.log('[Postal] Headers:',hdr,'| Row 0:',JSON.stringify(rows[0]));
     // Positional column assignment — matches confirmed sheet layout
     // col[0]=block, col[1]=street, col[3]=postal
-    const bKey=hdr[0];  // block (96, 96A, 96B, 958A...)
-    const sKey=hdr[1];  // street name
-    const pKey=hdr[3]||hdr[hdr.length-1]; // postal code (last col)
+    // Name-based detection first (works when headers are named)
+    // Positional fallback for each col based on confirmed sheet layout:
+    // col[0]=block, col[1]=street, col[2]=full_address, col[3]=postal
+    const findCol=(names,fallbackIdx)=>{
+      const lo=hdr.map(h=>h.toLowerCase().trim());
+      const i=lo.findIndex(h=>names.includes(h));
+      return i>=0?hdr[i]:(hdr[fallbackIdx]||null);
+    };
+    const pKey=findCol(['postal_code','postal','postcode','post_code','postalcode','postal code'],3);
+    const bKey=findCol(['block','blk','block_no','blk_no','blk no','block number'],0);
+    const sKey=findCol(['street_name','street','street_nm','road_name','road','street name'],1);
     console.log('[Postal] Columns — block:'+bKey+' street:'+sKey+' postal:'+pKey);
     let n=0;
     rows.forEach(row=>{
