@@ -1326,79 +1326,60 @@ async function _loadPostalBg(){
     const r=await fetch(SHEET_URLS.postalcodes);
     if(!r.ok){console.warn('[Postal] HTTP '+r.status);return;}
     const txt=await r.text();
-    if(txt.trim().startsWith('<')){console.warn('[Postal] Got HTML — check sheet is published as CSV');return;}
+    if(txt.trim().startsWith('<')){console.warn('[Postal] Got HTML — publish sheet as CSV first');return;}
     const rows=parseCSV(txt);
-    if(!rows.length){console.warn('[Postal] No rows parsed');return;}
+    if(!rows.length){console.warn('[Postal] No rows');return;}
 
-    // Log actual headers so we can see exactly what the sheet has
+    // Sheet columns (from screenshot): block | street | full_address | postal_code
+    // Use positional assignment — most reliable since header names vary
     const hdr=Object.keys(rows[0]);
-    console.log('[Postal] Headers found:',hdr);
-    console.log('[Postal] Sample row 0:',JSON.stringify(rows[0]));
-    if(rows[1]) console.log('[Postal] Sample row 1:',JSON.stringify(rows[1]));
+    console.log('[Postal] Headers:',hdr,'| Sample:',JSON.stringify(rows[0]));
 
-    // Match column by trying every likely variant (exact case from sheet)
-    // Uses the ACTUAL header string — not lowercased — so we preserve it for lookup
-    const findCol=(candidates)=>{
-      const hdrLower=hdr.map(h=>h.toLowerCase().trim());
-      const idx=hdrLower.findIndex(h=>candidates.includes(h));
-      return idx>=0?hdr[idx]:null;
+    // Positional: col 0=block, col 1=street, col 3=postal
+    // Also try name-based in case sheet order changes
+    const findCol=(names)=>{
+      const lo=hdr.map(h=>h.toLowerCase().trim());
+      const i=lo.findIndex(h=>names.includes(h));
+      return i>=0?hdr[i]:null;
     };
 
-    const pKey=findCol(['postal_code','postal','postcode','post_code','postalcode','postal code','zip','zipcode']);
-    const bKey=findCol(['block','blk','block_no','blk_no','blk no','block no','block number','bldg_no']);
-    const sKey=findCol(['street_name','street','street_nm','road_name','road','street name','streetname','address']);
-    // Try name-based match first, then auto-detect by scanning row values with normalizeTown
-    let tKey=findCol(['town','town_name','town_code','hdb_town','towncode','town code','hdb town',
-                      'planning_area','twncd','twn_code','town cd','hdb_town_code']);
-    if(!tKey){
-      // Auto-detect: find the column whose value in row 0 normalizeTown() can resolve
-      tKey=hdr.find(h=>{
-        const v=(rows[0][h]||'').toString().trim();
-        return v && normalizeTown(v)!==null;
-      })||null;
-      if(tKey) console.log('[Postal] Town column auto-detected:',tKey,'value:',rows[0][tKey]);
-    }
+    // Postal = last column (col 3) or name match
+    const pKey=findCol(['postal_code','postal','postcode','post_code','postalcode','postal code'])||hdr[3]||hdr[hdr.length-1];
+    // Block = first column (col 0) or name match — handles "96", "96A", "96B" etc.
+    const bKey=findCol(['block','blk','block_no','blk_no','blk no','block number'])||hdr[0];
+    // Street = second column (col 1) or name match
+    const sKey=findCol(['street_name','street','street_nm','road_name','road','street name'])||hdr[1];
 
-    console.log('[Postal] Columns mapped — postal:'+pKey+' block:'+bKey+' street:'+sKey+' town:'+tKey);
-    if(!tKey) console.warn('[Postal] Town column NOT found — full headers:',hdr);
+    console.log('[Postal] Using — postal:'+pKey+' block:'+bKey+' street:'+sKey);
 
-    if(!pKey){
-      console.warn('[Postal] Cannot find postal code column. Available headers: '+hdr.join(' | '));
-      // Last resort: try to use ANY column that looks like a 5-6 digit number
-      // by scanning first row values
-      return;
-    }
-
-    let n=0, skipped=0;
+    let n=0;
     rows.forEach(row=>{
-      // Postal: strip everything except digits, then zero-pad to 6
+      // Postal: must be exactly 6 digits (zero-pad if needed)
       const rawP=(row[pKey]||'').toString().trim();
       if(!rawP)return;
       const digits=rawP.replace(/[^0-9]/g,'');
-      if(!digits){skipped++;return;}
-      const postal=digits.padStart(6,'0').slice(-6); // take last 6 in case of overflow
-      if(postal==='000000'){skipped++;return;}
+      if(!digits||digits.length>6)return;
+      const postal=digits.padStart(6,'0');
+      if(postal==='000000')return;
 
-      const blk   =bKey?(row[bKey]||'').toString().trim().toUpperCase():'';
-      const street=sKey?(row[sKey]||'').toString().trim().toUpperCase():'';
-      const tRaw  =tKey?(row[tKey]||'').toString().trim():'';
-      // normalizeTown handles short codes (AMK, BD, BH…) AND full names
-      // If town is empty/unmapped, leave blank for now — we resolve it at lookup time from DB.resale
-      const town  =normalizeTown(tRaw)||tRaw.toUpperCase();
+      // Block: keep alphanumeric as-is (96, 96A, 96B, 123C etc.)
+      const blk=(row[bKey]||'').toString().trim().toUpperCase();
+      // Street: uppercase for consistent matching
+      const street=(row[sKey]||'').toString().trim().toUpperCase();
 
       if(blk||street){
-        DB.postalMap[postal]={block:blk,street,town};
+        DB.postalMap[postal]={block:blk,street};
         n++;
-      } else {
-        skipped++;
       }
     });
-    console.log('[Postal] Loaded '+n+' entries, skipped '+skipped);
-    // Show a sample so we can verify lookups work
-    const sample=Object.entries(DB.postalMap).slice(0,3);
-    sample.forEach(([k,v])=>console.log('[Postal] Sample entry '+k+':',JSON.stringify(v)));
+
+    console.log('[Postal] Loaded '+n+' entries');
+    // Log a few samples including alphanumeric blocks
+    const samples=Object.entries(DB.postalMap).filter(([k,v])=>v.block&&v.block.match(/[A-Z]/)).slice(0,3);
+    samples.forEach(([k,v])=>console.log('[Postal] Alpha-block sample:',k,'->',JSON.stringify(v)));
+
   }catch(e){
-    console.warn('[Postal] Load failed:',e.message,e.stack);
+    console.warn('[Postal] Failed:',e.message);
   }
 }
 
@@ -3359,21 +3340,18 @@ function _postalResolve(postal){
   // Step 1: get block + street from postalMap (hdb_with_postalcodes sheet)
   const entry=DB.postalMap[postal];
   if(!entry){
-    const mapSize=Object.keys(DB.postalMap).length;
-    console.warn('[PostalLookup] '+postal+' not found. Map has '+mapSize+' entries.');
+    console.warn('[PostalLookup] '+postal+' not found. Map size:'+Object.keys(DB.postalMap).length);
     return null;
   }
-  // Step 2: derive town by matching street against DB.townStreets
-  // DB.townStreets = { "CLEMENTI": ["CLEMENTI WEST ST 1", ...], ... }
-  if(!entry.town && entry.street){
-    const street=entry.street.toUpperCase();
-    const town=Object.keys(DB.townStreets).find(t=>
-      (DB.townStreets[t]||[]).some(s=>s.toUpperCase()===street)
-    )||'';
-    entry.town=town;
-  }
-  console.log('[PostalLookup] Hit:',postal,'->',JSON.stringify(entry));
-  return entry;
+  // Step 2: always derive town from DB.townStreets (authoritative street→town mapping)
+  // This handles all cases including when postal sheet has no town column
+  const streetUpper=(entry.street||'').toUpperCase();
+  const town=Object.keys(DB.townStreets).find(t=>
+    (DB.townStreets[t]||[]).some(s=>s.toUpperCase()===streetUpper)
+  )||'';
+  const result={block:entry.block||'',street:entry.street||'',town};
+  console.log('[PostalLookup]',postal,'->',JSON.stringify(result));
+  return result;
 }
 
 function _postalFb(fbId,clrId,type,msg){
@@ -3466,7 +3444,11 @@ function postalFillSearch(raw){
   _refreshStoreyFromBlocks();
   _refreshStreetInfo();
 
-  _postalFb(fbId,clrId,'ok','&#x2705; <strong>'+m.block+' '+m.street+'</strong>, '+m.town);
+  if(m.block){
+    _postalFb(fbId,clrId,'ok','&#x2705; <strong>'+m.block+' '+m.street+'</strong>, '+m.town);
+  } else {
+    _postalFb(fbId,clrId,'ok','&#x2705; <strong>'+m.street+'</strong>, '+m.town+' — please select your block ↓');
+  }
 }
 
 function postalClearSearch(){
@@ -3491,11 +3473,6 @@ function postalFillEV(raw){
 
   const m=_postalResolve(postal);
   if(!m||!m.town){_postalFb(fbId,clrId,'err','Postal '+postal+' not found in HDB records');return;}
-
-  // Debug — remove once confirmed working
-  console.log('[EV Fill] postal='+postal+' block="'+m.block+'" street="'+m.street+'" town="'+m.town+'"');
-  const resaleForStreet=DB.resale.filter(r=>r.street_name&&r.street_name.toUpperCase()===m.street.toUpperCase()&&r.block);
-  console.log('[EV Fill] resale blocks for this street:',resaleForStreet.map(r=>r.block).filter((v,i,a)=>a.indexOf(v)===i).sort());
 
   // ── STEP 1: Town <select> ────────────────────────────────
   const tSel=document.getElementById('ev-town');
@@ -3543,7 +3520,6 @@ function postalFillEV(raw){
     blocks.map(b=>'<option value="'+b+'">'+b+'</option>').join('');
 
   // ── STEP 5: Set the block value ──────────────────────────
-  // Match case-insensitively: postal block may differ in case from resale block
   if(m.block){
     const blockUpper=m.block.toUpperCase();
     const matchedOpt=[...bSel.options].find(o=>o.value.toUpperCase()===blockUpper);
@@ -3552,15 +3528,18 @@ function postalFillEV(raw){
       bSel.classList.remove('ev-field-error');
       document.getElementById('ev-err-block').style.display='none';
       evOnBlockChange();
+      evPopulateLeaseYears(m.town, m.street, m.block);
+      _postalFb(fbId,clrId,'ok','&#x2705; <strong>'+m.block+' '+m.street+'</strong>, '+m.town);
     } else {
-      console.warn('[PostalFillEV] block "'+m.block+'" not found in options:',blocks);
+      console.warn('[PostalFillEV] block "'+m.block+'" not in resale options');
+      evPopulateLeaseYears(m.town, m.street, null);
+      _postalFb(fbId,clrId,'ok','&#x2705; <strong>'+m.street+'</strong>, '+m.town+' — please select your block');
     }
+  } else {
+    // Block not in postal sheet — street + town filled, user picks block
+    evPopulateLeaseYears(m.town, m.street, null);
+    _postalFb(fbId,clrId,'ok','&#x2705; <strong>'+m.street+'</strong>, '+m.town+' — please select your block ↓');
   }
-
-  // Also populate lease years from street level
-  evPopulateLeaseYears(m.town, m.street, m.block);
-
-  _postalFb(fbId,clrId,'ok','&#x2705; <strong>'+m.block+' '+m.street+'</strong>, '+m.town);
 }
 
 function postalClearEV(){
