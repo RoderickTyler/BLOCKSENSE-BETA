@@ -465,13 +465,11 @@ footer a{color:var(--accent);text-decoration:none;}
       </div>
     </div>
     <!-- END MAP TOWN SELECTOR -->
-    <!-- Postal Quick-fill -->
     <div class="postal-bar" id="srch-postal-bar">
       <span class="postal-icon">📮</span>
       <span class="postal-label">Postal Code</span>
       <input class="postal-input" type="text" id="srch-postal-input" maxlength="6"
-        placeholder="e.g. 310123"
-        oninput="postalFillSearch(this.value)" autocomplete="off"/>
+        placeholder="e.g. 310123" oninput="postalFillSearch(this.value)" autocomplete="off"/>
       <span class="postal-fb hint" id="srch-postal-fb">Optional — auto-fills Town, Street &amp; Block</span>
       <button class="postal-clr" id="srch-postal-clr" onclick="postalClearSearch()">✕ Clear</button>
     </div>
@@ -731,13 +729,11 @@ footer a{color:var(--accent);text-decoration:none;}
 
   <div class="card" id="ev-form" style="opacity:0.5;pointer-events:none;">
 
-    <!-- Postal Quick-fill -->
     <div class="postal-bar" id="ev-postal-bar">
       <span class="postal-icon">📮</span>
       <span class="postal-label">Postal Code</span>
       <input class="postal-input" type="text" id="ev-postal-input" maxlength="6"
-        placeholder="e.g. 310123"
-        oninput="postalFillEV(this.value)" autocomplete="off"/>
+        placeholder="e.g. 310123" oninput="postalFillEV(this.value)" autocomplete="off"/>
       <span class="postal-fb hint" id="ev-postal-fb">Optional — auto-fills Town, Street &amp; Block</span>
       <button class="postal-clr" id="ev-postal-clr" onclick="postalClearEV()">✕ Clear</button>
     </div>
@@ -1240,8 +1236,8 @@ const SHEET_URLS={
 // API KEY EXPIRES ~April 2027. Renew at https://data.gov.sg/signin
 const API_KEY='v2:6583329b681acd14995522c0666d4c0bbc417afdbe1a4f51390daa46548a223b:z2bzj3bIbgjvDYIisZ8Zw0j7uXNBqxqh';
 
+// ── State ──────────────────────────────────────────────────────
 // ── Town Code Map ─────────────────────────────────────────────
-// Maps short codes + full names (any case) → canonical resale DB town name
 const TOWN_CODE_MAP={
   "AMK":"ANG MO KIO","ANG MO KIO":"ANG MO KIO",
   "BD":"BEDOK","BEDOK":"BEDOK",
@@ -1276,7 +1272,6 @@ function normalizeTown(raw){
   return TOWN_CODE_MAP[raw.trim().toUpperCase()]||null;
 }
 
-// ── State ──────────────────────────────────────────────────────
 const DB={resale:[],townStreets:{},postalMap:{},loaded:false};
 let selectedMonths=6,currentView='block',dateMode='quick',lastRecords=[],sortedRecords=[],sortCol=null,sortDir='desc',currentPage=1,rowsPerPage=50;
 let topDateMode='quick',topSelectedMonths=6;
@@ -1285,102 +1280,52 @@ let topDateMode='quick',topSelectedMonths=6;
 function parseCSV(text){const lines=text.trim().split('\n');if(lines.length<2)return[];const parseRow=line=>{const result=[],re=/("(?:[^"]|"")*"|[^,]*)/g;let m;while((m=re.exec(line))!==null){if(m.index===re.lastIndex)re.lastIndex++;let v=m[1];if(v.startsWith('"')&&v.endsWith('"'))v=v.slice(1,-1).replace(/""/g,'"');result.push(v);}return result;};const headers=parseRow(lines[0]);return lines.slice(1).map(l=>{const vals=parseRow(l);return Object.fromEntries(headers.map((h,i)=>[h,vals[i]||'']));});}
 
 // ── Load all data ──────────────────────────────────────────────
-async function loadAllData(){
-  const statusEl=document.getElementById('data-load-msg');
-  const form=document.getElementById('search-form');
-  try{
-    statusEl.innerHTML='Loading transactions...';
-    const r1=await fetch(SHEET_URLS.resaletxn);
-    if(!r1.ok)throw new Error('Resale tab error '+r1.status);
-    const resaleData=parseCSV(await r1.text());
-    DB.resale=resaleData;
-    statusEl.innerHTML='Loaded '+resaleData.length.toLocaleString()+' transactions. Loading street data...';
-    const r2=await fetch(SHEET_URLS.townstreets);
-    if(!r2.ok)throw new Error('Town streets tab error '+r2.status);
-    const streetData=parseCSV(await r2.text());
-    streetData.forEach(row=>{if(row.town&&row.streets)DB.townStreets[row.town]=row.streets.split('|').filter(Boolean).sort();});
-    DB.loaded=true;
-    document.getElementById('hero-txn-count').textContent=resaleData.length.toLocaleString()+'+';
-    const lastUpdated=resaleData.reduce((max,r)=>r.month>max?r.month:max,'');
-    document.getElementById('hero-updated').textContent=lastUpdated;
-    form.style.opacity='1';form.style.pointerEvents='auto';
-    document.getElementById('data-load-status').style.background='rgba(29,158,117,0.08)';
-    document.getElementById('data-load-status').style.borderColor='rgba(29,158,117,0.25)';
-    statusEl.innerHTML='<strong style="color:var(--accent2)">'+resaleData.length.toLocaleString()+' transactions</strong> loaded. Ready to search';
-    buildTicker();evEnableForm();
-    const maxP=resaleData.reduce((m,r)=>Math.max(m,Number(r.resale_price)||0),0);
-    const minP=resaleData.reduce((m,r)=>{const p=Number(r.resale_price)||0;return p>0?Math.min(m,p):m;},Infinity);
-    if(maxP>0)initPriceSlider(minP===Infinity?0:minP,maxP);
-    // Postal loads in background — never blocks or breaks the app
-    _loadPostalBg();
-  }catch(err){
-    document.getElementById('data-load-status').style.borderColor='rgba(224,92,58,0.4)';
-    statusEl.innerHTML='Could not load: '+err.message+'<br><small>Make sure your tabs are published as CSV</small>';
-    form.style.opacity='1';form.style.pointerEvents='auto';evEnableForm();
-  }
-}
+async function loadAllData(){const statusEl=document.getElementById('data-load-msg');const form=document.getElementById('search-form');try{statusEl.innerHTML='Loading transactions...';const r1=await fetch(SHEET_URLS.resaletxn);if(!r1.ok)throw new Error(`Resale tab error ${r1.status}`);const resaleData=parseCSV(await r1.text());DB.resale=resaleData;statusEl.innerHTML=`Loaded ${resaleData.length.toLocaleString()} transactions. Loading street data...`;const r2=await fetch(SHEET_URLS.townstreets);if(!r2.ok)throw new Error(`Town streets tab error ${r2.status}`);const streetData=parseCSV(await r2.text());streetData.forEach(row=>{if(row.town&&row.streets)DB.townStreets[row.town]=row.streets.split('|').filter(Boolean).sort();});DB.loaded=true;document.getElementById('hero-txn-count').textContent=resaleData.length.toLocaleString()+'+';const lastUpdated=resaleData.reduce((max,r)=>r.month>max?r.month:max,'');document.getElementById('hero-updated').textContent=lastUpdated;form.style.opacity='1';form.style.pointerEvents='auto';document.getElementById('data-load-status').style.background='rgba(29,158,117,0.08)';document.getElementById('data-load-status').style.borderColor='rgba(29,158,117,0.25)';statusEl.innerHTML=`<strong style="color:var(--accent2)">${resaleData.length.toLocaleString()} transactions</strong> loaded. Ready to search`;buildTicker();evEnableForm();_loadPostalBg();
+  // Init price slider with actual max price from dataset
+  const maxResalePrice=resaleData.reduce((m,r)=>Math.max(m,Number(r.resale_price)||0),0);
+  const minResalePrice=resaleData.reduce((m,r)=>{const p=Number(r.resale_price)||0;return p>0?Math.min(m,p):m;},Infinity);
+  if(maxResalePrice>0)initPriceSlider(minResalePrice===Infinity?0:minResalePrice,maxResalePrice);}catch(err){document.getElementById('data-load-status').style.borderColor='rgba(224,92,58,0.4)';statusEl.innerHTML=`Could not load: ${err.message}<br><small>Make sure your tabs are published as CSV</small>`;form.style.opacity='1';form.style.pointerEvents='auto';evEnableForm();}}
 
-// ── Background postal loader ───────────────────────────────────
+// ── Postal data loader ─────────────────────────────────────────
+// Sheet columns (confirmed from screenshot):
+//   col[0] = block  (numeric "96" OR alphanumeric "96A","96B","958A" etc.)
+//   col[1] = street (e.g. "HENDERSON RD")
+//   col[2] = full_address (concatenation — ignored)
+//   col[3] = postal_code (6-digit number e.g. "151096")
+// We use POSITIONAL indexing so column header names don't matter.
 async function _loadPostalBg(){
   try{
     const r=await fetch(SHEET_URLS.postalcodes);
     if(!r.ok){console.warn('[Postal] HTTP '+r.status);return;}
     const txt=await r.text();
-    if(txt.trim().startsWith('<')){console.warn('[Postal] Got HTML — publish sheet as CSV first');return;}
+    if(txt.trim().startsWith('<')){console.warn('[Postal] Got HTML — publish sheet tab as CSV');return;}
     const rows=parseCSV(txt);
-    if(!rows.length){console.warn('[Postal] No rows');return;}
-
-    // Sheet columns (from screenshot): block | street | full_address | postal_code
-    // Use positional assignment — most reliable since header names vary
+    if(!rows.length){console.warn('[Postal] Empty sheet');return;}
     const hdr=Object.keys(rows[0]);
-    console.log('[Postal] Headers:',hdr,'| Sample:',JSON.stringify(rows[0]));
-
-    // Positional: col 0=block, col 1=street, col 3=postal
-    // Also try name-based in case sheet order changes
-    const findCol=(names)=>{
-      const lo=hdr.map(h=>h.toLowerCase().trim());
-      const i=lo.findIndex(h=>names.includes(h));
-      return i>=0?hdr[i]:null;
-    };
-
-    // Postal = last column (col 3) or name match
-    const pKey=findCol(['postal_code','postal','postcode','post_code','postalcode','postal code'])||hdr[3]||hdr[hdr.length-1];
-    // Block = first column (col 0) or name match — handles "96", "96A", "96B" etc.
-    const bKey=findCol(['block','blk','block_no','blk_no','blk no','block number'])||hdr[0];
-    // Street = second column (col 1) or name match
-    const sKey=findCol(['street_name','street','street_nm','road_name','road','street name'])||hdr[1];
-
-    console.log('[Postal] Using — postal:'+pKey+' block:'+bKey+' street:'+sKey);
-
+    console.log('[Postal] Headers:',hdr,'| Row 0:',JSON.stringify(rows[0]));
+    // Positional column assignment — matches confirmed sheet layout
+    // col[0]=block, col[1]=street, col[3]=postal
+    const bKey=hdr[0];  // block (96, 96A, 96B, 958A...)
+    const sKey=hdr[1];  // street name
+    const pKey=hdr[3]||hdr[hdr.length-1]; // postal code (last col)
+    console.log('[Postal] Columns — block:'+bKey+' street:'+sKey+' postal:'+pKey);
     let n=0;
     rows.forEach(row=>{
-      // Postal: must be exactly 6 digits (zero-pad if needed)
       const rawP=(row[pKey]||'').toString().trim();
       if(!rawP)return;
+      // Postal: digits only, zero-pad to 6
       const digits=rawP.replace(/[^0-9]/g,'');
       if(!digits||digits.length>6)return;
       const postal=digits.padStart(6,'0');
       if(postal==='000000')return;
-
-      // Block: keep alphanumeric as-is (96, 96A, 96B, 123C etc.)
+      // Block: keep as-is including letters (96A, 96B, 958A etc.)
       const blk=(row[bKey]||'').toString().trim().toUpperCase();
-      // Street: uppercase for consistent matching
+      // Street: uppercase for matching
       const street=(row[sKey]||'').toString().trim().toUpperCase();
-
-      if(blk||street){
-        DB.postalMap[postal]={block:blk,street};
-        n++;
-      }
+      if(blk||street){DB.postalMap[postal]={block:blk,street};n++;}
     });
-
-    console.log('[Postal] Loaded '+n+' entries');
-    // Log a few samples including alphanumeric blocks
-    const samples=Object.entries(DB.postalMap).filter(([k,v])=>v.block&&v.block.match(/[A-Z]/)).slice(0,3);
-    samples.forEach(([k,v])=>console.log('[Postal] Alpha-block sample:',k,'->',JSON.stringify(v)));
-
-  }catch(e){
-    console.warn('[Postal] Failed:',e.message);
-  }
+    console.log('[Postal] Loaded '+n+' entries. Sample:',JSON.stringify(Object.entries(DB.postalMap).slice(0,2)));
+  }catch(e){console.warn('[Postal] Failed:',e.message);}
 }
 
 function toggleAdv(){const body=document.getElementById('adv-body');const icon=document.getElementById('adv-icon');const open=body.classList.toggle('open');icon.textContent=open?'▾':'▸';}
@@ -3324,34 +3269,25 @@ function resetEstimateValue(){
 }
 
 
-// ════════════════════════════════════════════════════════════
-//  POSTAL CODE LOOKUP
-// ════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════
+//  POSTAL CODE LOOKUP + AUTOFILL
+// ════════════════════════════════════════════════════════
 
-function _postalNorm(raw){
-  const d=raw.replace(/[^0-9]/g,'');
-  if(d.length!==6)return null;
-  return d;
-}
-
-// Resolve postal → {block, street, town}
-// Tries postalMap first, then scans DB.resale directly as fallback
+// Resolve postal code → {block, street, town}
+// block + street come from postalMap (hdb_with_postalcodes sheet)
+// town is derived from DB.townStreets (authoritative street→town mapping)
 function _postalResolve(postal){
-  // Step 1: get block + street from postalMap (hdb_with_postalcodes sheet)
   const entry=DB.postalMap[postal];
   if(!entry){
-    console.warn('[PostalLookup] '+postal+' not found. Map size:'+Object.keys(DB.postalMap).length);
+    console.warn('[Postal] '+postal+' not found. Map size:',Object.keys(DB.postalMap).length);
     return null;
   }
-  // Step 2: always derive town from DB.townStreets (authoritative street→town mapping)
-  // This handles all cases including when postal sheet has no town column
-  const streetUpper=(entry.street||'').toUpperCase();
+  // Derive town by matching street against DB.townStreets
+  const streetUp=(entry.street||'').toUpperCase();
   const town=Object.keys(DB.townStreets).find(t=>
-    (DB.townStreets[t]||[]).some(s=>s.toUpperCase()===streetUpper)
+    (DB.townStreets[t]||[]).some(s=>s.toUpperCase()===streetUp)
   )||'';
-  const result={block:entry.block||'',street:entry.street||'',town};
-  console.log('[PostalLookup]',postal,'->',JSON.stringify(result));
-  return result;
+  return {block:entry.block,street:entry.street,town};
 }
 
 function _postalFb(fbId,clrId,type,msg){
@@ -3363,188 +3299,124 @@ function _postalFb(fbId,clrId,type,msg){
   clr.style.display=(type==='ok'||type==='err')?'inline-block':'none';
 }
 
-// ── Transaction Search: fill Town + Street + Block combos ────
+// ── Transaction Search autofill ──────────────────────────
 function postalFillSearch(raw){
-  const fbId='srch-postal-fb', clrId='srch-postal-clr';
+  const fbId='srch-postal-fb',clrId='srch-postal-clr';
   const digits=raw.replace(/[^0-9]/g,'');
-
-  // Reset feedback while typing
-  if(digits.length<6){
-    _postalFb(fbId,clrId,'hint','Optional — auto-fills Town, Street &amp; Block');
-    return;
-  }
-
-  const postal=_postalNorm(raw);
-  if(!postal){_postalFb(fbId,clrId,'err','Enter exactly 6 digits');return;}
+  if(digits.length<6){_postalFb(fbId,clrId,'hint','Optional — auto-fills Town, Street &amp; Block');return;}
   if(!DB.loaded){_postalFb(fbId,clrId,'hint','Still loading — please wait…');return;}
-
+  const postal=digits.padStart(6,'0');
   const m=_postalResolve(postal);
-  if(!m||!m.town){_postalFb(fbId,clrId,'err','Postal '+postal+' not found in HDB records');return;}
+  if(!m){_postalFb(fbId,clrId,'err','Postal '+postal+' not found in HDB records');return;}
+  if(!m.town){_postalFb(fbId,clrId,'err','Street "'+m.street+'" not matched to any town');return;}
 
-  // ── STEP 1: Town ──────────────────────────────────────────
-  // Uncheck all towns, check the one we want
+  // Town checkbox
   document.querySelectorAll('#ms-town input[type=checkbox]:not(#ms-town-all)').forEach(cb=>{cb.checked=false;});
   const tCb=document.querySelector('#ms-town input[value="'+CSS.escape(m.town)+'"]');
-  if(tCb) tCb.checked=true;
-  // Sync label, map, and combo tag
-  updateTownLabel();
-  syncMapFromDropdown();
+  if(tCb)tCb.checked=true;
+  updateTownLabel();syncMapFromDropdown();
 
-  // ── STEP 2: Build street list from DB directly ────────────
-  // Don't call onTownChange() — it would try to preserve prev selections
-  // and run cascade logic we don't want here.
-  // Instead, build streets directly from DB.resale for this town.
-  const streets=[...new Set(
-    DB.resale.filter(r=>r.town===m.town&&r.street_name).map(r=>r.street_name)
-  )].sort();
-
-  // Also merge from DB.townStreets if available
+  // Build street list from townStreets + resale, then check the matching street
   const tsStreets=DB.townStreets[m.town]||[];
-  const allStreets=[...new Set([...streets,...tsStreets])].sort();
-
-  buildStreetOptions(allStreets);  // renders checkboxes into #ms-street-options
-
-  // Clear any previous street/block tags
+  const rsStreets=[...new Set(DB.resale.filter(r=>r.town===m.town&&r.street_name).map(r=>r.street_name))];
+  buildStreetOptions([...new Set([...tsStreets,...rsStreets])].sort());
   document.getElementById('street-combo-tags').innerHTML='';
   document.getElementById('block-combo-tags').innerHTML='';
 
-  // ── STEP 3: Check the street (case-insensitive) ─────────
-  const streetUpperS2=m.street.toUpperCase();
+  const streetUp=m.street.toUpperCase();
   const sCb=[...document.querySelectorAll('#ms-street-options input[type=checkbox]')]
-    .find(cb=>cb.value.toUpperCase()===streetUpperS2);
-  if(sCb){
-    sCb.checked=true;
-    renderComboTags('ms-street','street-combo-tags','street');
-  }
+    .find(cb=>cb.value.toUpperCase()===streetUp);
+  if(sCb){sCb.checked=true;renderComboTags('ms-street','street-combo-tags','street');}
 
-  // ── STEP 4: Build block list for this street from DB.resale ──
-  const streetUpperS=m.street.toUpperCase();
-  const blocksS=[...new Set(
-    DB.resale.filter(r=>
-      r.town===m.town &&
-      r.street_name&&r.street_name.toUpperCase()===streetUpperS &&
-      r.block
-    ).map(r=>r.block)
+  // Build block list from resale for this street, then check the matching block
+  const blocks=[...new Set(
+    DB.resale.filter(r=>r.town===m.town&&r.street_name&&r.street_name.toUpperCase()===streetUp&&r.block)
+    .map(r=>r.block)
   )].sort((a,b)=>isNaN(a)||isNaN(b)?a.localeCompare(b):Number(a)-Number(b));
+  buildBlockOptions(blocks);
 
-  buildBlockOptions(blocksS);  // renders checkboxes into #ms-block-options
-
-  // ── STEP 5: Check the block (case-insensitive) ────────────
   if(m.block){
-    const blockUpperS=m.block.toUpperCase();
+    const blockUp=m.block.toUpperCase();
     const bCb=[...document.querySelectorAll('#ms-block-options input[type=checkbox]')]
-      .find(cb=>cb.value.toUpperCase()===blockUpperS);
-    if(bCb){
-      bCb.checked=true;
-      renderComboTags('ms-block','block-combo-tags','block');
-    }
+      .find(cb=>cb.value.toUpperCase()===blockUp);
+    if(bCb){bCb.checked=true;renderComboTags('ms-block','block-combo-tags','block');}
   }
 
-  // Refresh the storey filter + street info hint
-  _refreshStoreyFromBlocks();
-  _refreshStreetInfo();
-
-  if(m.block){
-    _postalFb(fbId,clrId,'ok','&#x2705; <strong>'+m.block+' '+m.street+'</strong>, '+m.town);
-  } else {
-    _postalFb(fbId,clrId,'ok','&#x2705; <strong>'+m.street+'</strong>, '+m.town+' — please select your block ↓');
-  }
+  _refreshStoreyFromBlocks();_refreshStreetInfo();
+  const msg=m.block
+    ?'&#x2705; <strong>Blk '+m.block+' '+m.street+'</strong>, '+m.town
+    :'&#x2705; <strong>'+m.street+'</strong>, '+m.town+' — select your block below';
+  _postalFb(fbId,clrId,'ok',msg);
 }
 
 function postalClearSearch(){
   const inp=document.getElementById('srch-postal-input');
-  if(inp) inp.value='';
+  if(inp)inp.value='';
   _postalFb('srch-postal-fb','srch-postal-clr','hint','Optional — auto-fills Town, Street &amp; Block');
 }
 
-// ── Estimated Value: fill Town + Street + Block selects ──────
+// ── Estimated Value autofill ─────────────────────────────
 function postalFillEV(raw){
-  const fbId='ev-postal-fb', clrId='ev-postal-clr';
+  const fbId='ev-postal-fb',clrId='ev-postal-clr';
   const digits=raw.replace(/[^0-9]/g,'');
-
-  if(digits.length<6){
-    _postalFb(fbId,clrId,'hint','Optional — auto-fills Town, Street &amp; Block');
-    return;
-  }
-
-  const postal=_postalNorm(raw);
-  if(!postal){_postalFb(fbId,clrId,'err','Enter exactly 6 digits');return;}
+  if(digits.length<6){_postalFb(fbId,clrId,'hint','Optional — auto-fills Town, Street &amp; Block');return;}
   if(!DB.loaded){_postalFb(fbId,clrId,'hint','Still loading — please wait…');return;}
-
+  const postal=digits.padStart(6,'0');
   const m=_postalResolve(postal);
-  if(!m||!m.town){_postalFb(fbId,clrId,'err','Postal '+postal+' not found in HDB records');return;}
+  if(!m){_postalFb(fbId,clrId,'err','Postal '+postal+' not found in HDB records');return;}
+  if(!m.town){_postalFb(fbId,clrId,'err','Street "'+m.street+'" not matched to any town');return;}
 
-  // ── STEP 1: Town <select> ────────────────────────────────
+  // Town
   const tSel=document.getElementById('ev-town');
   tSel.value=m.town;
-  // Clear error highlight
   tSel.classList.remove('ev-field-error');
   document.getElementById('ev-err-town').style.display='none';
 
-  // ── STEP 2: Build street <options> directly from townStreets + resale ─
+  // Street — build options from townStreets + resale, set value
   const tsStreets=DB.townStreets[m.town]||[];
-  const resaleStreets=[...new Set(
-    DB.resale.filter(r=>r.town===m.town&&r.street_name).map(r=>r.street_name)
-  )];
-  const allStreets=[...new Set([...tsStreets,...resaleStreets])].sort();
-
+  const rsStreets=[...new Set(DB.resale.filter(r=>r.town===m.town&&r.street_name).map(r=>r.street_name))];
+  const allStreets=[...new Set([...tsStreets,...rsStreets])].sort();
   const sSel=document.getElementById('ev-street');
   sSel.innerHTML='<option value="">— Select street —</option>'+
     allStreets.map(s=>'<option value="'+s+'">'+s+'</option>').join('');
-
-  // ── STEP 3: Set the street value (case-insensitive match) ─
-  const streetUpper=m.street.toUpperCase();
-  const matchedStreetOpt=[...sSel.options].find(o=>o.value.toUpperCase()===streetUpper);
-  if(matchedStreetOpt){
-    sSel.value=matchedStreetOpt.value;
+  const streetUp=m.street.toUpperCase();
+  const sOpt=[...sSel.options].find(o=>o.value.toUpperCase()===streetUp);
+  if(sOpt){
+    sSel.value=sOpt.value;
     sSel.classList.remove('ev-field-error');
     document.getElementById('ev-err-street').style.display='none';
   }
 
-  // ── STEP 4: Build block <options> from DB.resale ─────────
-  // Use case-insensitive street match — postal sheet stores uppercase,
-  // resale DB may differ in casing
-  const streetUpperB=m.street.toUpperCase();
+  // Block — build options from resale for this street, set value
   const blocks=[...new Set(
-    DB.resale.filter(r=>
-      r.town===m.town &&
-      r.street_name&&r.street_name.toUpperCase()===streetUpperB &&
-      r.block
-    ).map(r=>r.block)
+    DB.resale.filter(r=>r.town===m.town&&r.street_name&&r.street_name.toUpperCase()===streetUp&&r.block)
+    .map(r=>r.block)
   )].sort((a,b)=>isNaN(a)||isNaN(b)?a.localeCompare(b):Number(a)-Number(b));
-
-  console.log('[PostalFillEV] block from postal:',m.block,'blocks from resale:',blocks);
-
   const bSel=document.getElementById('ev-block');
   bSel.innerHTML='<option value="">— Select block —</option>'+
     blocks.map(b=>'<option value="'+b+'">'+b+'</option>').join('');
 
-  // ── STEP 5: Set the block value ──────────────────────────
   if(m.block){
-    const blockUpper=m.block.toUpperCase();
-    const matchedOpt=[...bSel.options].find(o=>o.value.toUpperCase()===blockUpper);
-    if(matchedOpt){
-      bSel.value=matchedOpt.value;
+    const blockUp=m.block.toUpperCase();
+    const bOpt=[...bSel.options].find(o=>o.value.toUpperCase()===blockUp);
+    if(bOpt){
+      bSel.value=bOpt.value;
       bSel.classList.remove('ev-field-error');
       document.getElementById('ev-err-block').style.display='none';
       evOnBlockChange();
-      evPopulateLeaseYears(m.town, m.street, m.block);
-      _postalFb(fbId,clrId,'ok','&#x2705; <strong>'+m.block+' '+m.street+'</strong>, '+m.town);
-    } else {
-      console.warn('[PostalFillEV] block "'+m.block+'" not in resale options');
-      evPopulateLeaseYears(m.town, m.street, null);
-      _postalFb(fbId,clrId,'ok','&#x2705; <strong>'+m.street+'</strong>, '+m.town+' — please select your block');
     }
-  } else {
-    // Block not in postal sheet — street + town filled, user picks block
-    evPopulateLeaseYears(m.town, m.street, null);
-    _postalFb(fbId,clrId,'ok','&#x2705; <strong>'+m.street+'</strong>, '+m.town+' — please select your block ↓');
   }
+  evPopulateLeaseYears(m.town,sOpt?sOpt.value:m.street,m.block||null);
+
+  const msg=m.block
+    ?'&#x2705; <strong>Blk '+m.block+' '+m.street+'</strong>, '+m.town
+    :'&#x2705; <strong>'+m.street+'</strong>, '+m.town+' — select your block below';
+  _postalFb(fbId,clrId,'ok',msg);
 }
 
 function postalClearEV(){
   const inp=document.getElementById('ev-postal-input');
-  if(inp) inp.value='';
+  if(inp)inp.value='';
   _postalFb('ev-postal-fb','ev-postal-clr','hint','Optional — auto-fills Town, Street &amp; Block');
 }
 
