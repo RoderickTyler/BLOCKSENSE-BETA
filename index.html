@@ -1324,35 +1324,70 @@ async function loadAllData(){
 async function _loadPostalBg(){
   try{
     const r=await fetch(SHEET_URLS.postalcodes);
-    if(!r.ok){console.warn('Postal tab HTTP '+r.status+' — postal search unavailable');return;}
+    if(!r.ok){console.warn('[Postal] HTTP '+r.status);return;}
     const txt=await r.text();
-    if(txt.trim().startsWith('<')){console.warn('Postal tab returned HTML — publish it as CSV first');return;}
+    if(txt.trim().startsWith('<')){console.warn('[Postal] Got HTML — check sheet is published as CSV');return;}
     const rows=parseCSV(txt);
-    if(!rows.length)return;
-    // Auto-detect column names from headers (case-insensitive match)
+    if(!rows.length){console.warn('[Postal] No rows parsed');return;}
+
+    // Log actual headers so we can see exactly what the sheet has
     const hdr=Object.keys(rows[0]);
-    const col=(names)=>hdr.find(h=>names.includes(h.toLowerCase()))||null;
-    const pKey=col(['postal_code','postal','postcode','post_code','postalcode']);
-    const bKey=col(['block','blk','block_no','blk_no']);
-    const sKey=col(['street_name','street','street_nm','road_name','road']);
-    const tKey=col(['town','town_name','town_code','hdb_town']);
-    if(!pKey){console.warn('Postal sheet: no postal column. Headers:',hdr.join(', '));return;}
-    let n=0;
+    console.log('[Postal] Headers found:',hdr);
+    console.log('[Postal] Sample row 0:',JSON.stringify(rows[0]));
+    if(rows[1]) console.log('[Postal] Sample row 1:',JSON.stringify(rows[1]));
+
+    // Match column by trying every likely variant (exact case from sheet)
+    // Uses the ACTUAL header string — not lowercased — so we preserve it for lookup
+    const findCol=(candidates)=>{
+      const hdrLower=hdr.map(h=>h.toLowerCase().trim());
+      const idx=hdrLower.findIndex(h=>candidates.includes(h));
+      return idx>=0?hdr[idx]:null;
+    };
+
+    const pKey=findCol(['postal_code','postal','postcode','post_code','postalcode','postal code','zip','zipcode']);
+    const bKey=findCol(['block','blk','block_no','blk_no','blk no','block no','block number','bldg_no']);
+    const sKey=findCol(['street_name','street','street_nm','road_name','road','street name','streetname','address']);
+    const tKey=findCol(['town','town_name','town_code','hdb_town','towncode','town code','hdb town','planning_area']);
+
+    console.log('[Postal] Columns mapped — postal:'+pKey+' block:'+bKey+' street:'+sKey+' town:'+tKey);
+
+    if(!pKey){
+      console.warn('[Postal] Cannot find postal code column. Available headers: '+hdr.join(' | '));
+      // Last resort: try to use ANY column that looks like a 5-6 digit number
+      // by scanning first row values
+      return;
+    }
+
+    let n=0, skipped=0;
     rows.forEach(row=>{
-      const raw=(row[pKey]||'').toString().trim();
-      if(!raw)return;
-      const digits=raw.replace(/\D/g,'');
-      if(!digits||digits.length>6)return;
-      const postal=digits.padStart(6,'0');
-      if(postal==='000000')return;
+      // Postal: strip everything except digits, then zero-pad to 6
+      const rawP=(row[pKey]||'').toString().trim();
+      if(!rawP)return;
+      const digits=rawP.replace(/[^0-9]/g,'');
+      if(!digits){skipped++;return;}
+      const postal=digits.padStart(6,'0').slice(-6); // take last 6 in case of overflow
+      if(postal==='000000'){skipped++;return;}
+
       const blk   =bKey?(row[bKey]||'').toString().trim().toUpperCase():'';
       const street=sKey?(row[sKey]||'').toString().trim().toUpperCase():'';
       const tRaw  =tKey?(row[tKey]||'').toString().trim():'';
+      // normalizeTown handles short codes (AMK, BD, BH…) AND full names
       const town  =normalizeTown(tRaw)||tRaw.toUpperCase();
-      if(blk||street){DB.postalMap[postal]={block:blk,street,town};n++;}
+
+      if(blk||street){
+        DB.postalMap[postal]={block:blk,street,town};
+        n++;
+      } else {
+        skipped++;
+      }
     });
-    console.log('Postal map ready: '+n+' entries');
-  }catch(e){console.warn('Postal load failed (non-fatal):',e.message);}
+    console.log('[Postal] Loaded '+n+' entries, skipped '+skipped);
+    // Show a sample so we can verify lookups work
+    const sample=Object.entries(DB.postalMap).slice(0,3);
+    sample.forEach(([k,v])=>console.log('[Postal] Sample entry '+k+':',JSON.stringify(v)));
+  }catch(e){
+    console.warn('[Postal] Load failed:',e.message,e.stack);
+  }
 }
 
 function toggleAdv(){const body=document.getElementById('adv-body');const icon=document.getElementById('adv-icon');const open=body.classList.toggle('open');icon.textContent=open?'▾':'▸';}
@@ -3309,13 +3344,29 @@ function _postalNorm(raw){
 // Resolve postal → {block, street, town}
 // Tries postalMap first, then scans DB.resale directly as fallback
 function _postalResolve(postal){
-  if(DB.postalMap[postal]) return DB.postalMap[postal];
-  // Fallback: resale rows may carry postal_code field
+  // 1. postalMap (from hdb_with_postalcodes sheet)
+  if(DB.postalMap[postal]){
+    console.log('[PostalLookup] Found in postalMap:',postal,'->',JSON.stringify(DB.postalMap[postal]));
+    return DB.postalMap[postal];
+  }
+  // 2. Fallback: scan resale rows for a postal_code field
   const hit=DB.resale.find(r=>{
     const rp=(r.postal_code||r.postal||'').replace(/[^0-9]/g,'').padStart(6,'0');
     return rp===postal&&(r.block||r.street_name);
   });
-  if(hit) return {block:(hit.block||'').toUpperCase(),street:(hit.street_name||'').toUpperCase(),town:normalizeTown(hit.town)||hit.town||''};
+  if(hit){
+    console.log('[PostalLookup] Found in resale fallback:',postal);
+    return {block:(hit.block||'').toUpperCase(),street:(hit.street_name||'').toUpperCase(),town:normalizeTown(hit.town)||hit.town||''};
+  }
+  // 3. Not found — log map size to help debug
+  const mapSize=Object.keys(DB.postalMap).length;
+  console.warn('[PostalLookup] '+postal+' not found. postalMap has '+mapSize+' entries.');
+  if(mapSize>0){
+    // Log a few nearby keys so we can see the format
+    const keys=Object.keys(DB.postalMap).sort();
+    const nearby=keys.filter(k=>k.slice(0,3)===postal.slice(0,3)).slice(0,5);
+    if(nearby.length) console.warn('[PostalLookup] Same prefix entries:',nearby);
+  }
   return null;
 }
 
