@@ -3492,6 +3492,11 @@ function postalFillEV(raw){
   const m=_postalResolve(postal);
   if(!m||!m.town){_postalFb(fbId,clrId,'err','Postal '+postal+' not found in HDB records');return;}
 
+  // Debug — remove once confirmed working
+  console.log('[EV Fill] postal='+postal+' block="'+m.block+'" street="'+m.street+'" town="'+m.town+'"');
+  const resaleForStreet=DB.resale.filter(r=>r.street_name&&r.street_name.toUpperCase()===m.street.toUpperCase()&&r.block);
+  console.log('[EV Fill] resale blocks for this street:',resaleForStreet.map(r=>r.block).filter((v,i,a)=>a.indexOf(v)===i).sort());
+
   // ── STEP 1: Town <select> ────────────────────────────────
   const tSel=document.getElementById('ev-town');
   tSel.value=m.town;
