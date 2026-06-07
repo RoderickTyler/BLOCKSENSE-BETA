@@ -356,6 +356,35 @@ footer a{color:var(--accent);text-decoration:none;}
 .postal-fb.hint{color:var(--muted);}
 .postal-clr{height:26px;padding:0 9px;background:transparent;border:1px solid var(--border);border-radius:6px;font-size:11px;font-family:'DM Sans',sans-serif;color:var(--muted);cursor:pointer;display:none;white-space:nowrap;}
 .postal-clr:hover{border-color:var(--accentr);color:var(--accentr);}
+
+/* ── Location Panel ── */
+.loc-panel{background:rgba(29,158,117,0.07);border:1px solid rgba(29,158,117,0.28);border-radius:11px;padding:12px 14px;margin-bottom:14px;}
+.loc-panel-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.loc-btn{display:inline-flex;align-items:center;gap:7px;height:36px;padding:0 16px;background:var(--accent2);color:#fff;border:none;border-radius:9px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:opacity .15s,transform .1s;white-space:nowrap;flex-shrink:0;}
+.loc-btn:hover{opacity:.88;}
+.loc-btn:active{transform:scale(.98);}
+.loc-btn:disabled{opacity:.4;cursor:not-allowed;}
+.loc-status{font-size:12px;flex:1;min-width:160px;}
+.loc-status.idle{color:var(--muted);}
+.loc-status.loading{color:var(--accent);}
+.loc-status.ok{color:var(--accent2);font-weight:500;}
+.loc-status.err{color:var(--accentr);}
+.loc-status.unavail{color:var(--muted);font-style:italic;}
+.loc-radius-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px;}
+.loc-radius-label{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;white-space:nowrap;}
+.loc-radius-btn{padding:4px 11px;font-size:11px;font-weight:500;border-radius:7px;border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer;transition:all .13s;white-space:nowrap;}
+.loc-radius-btn.active{background:var(--accent2);border-color:var(--accent2);color:#fff;}
+.loc-radius-btn:hover:not(.active){border-color:var(--accent2);color:var(--accent2);}
+.loc-results{margin-top:10px;display:none;}
+.loc-results-label{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;}
+.loc-block-list{display:flex;flex-wrap:wrap;gap:6px;}
+.loc-block-chip{display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border-radius:8px;border:1px solid rgba(29,158,117,0.35);background:rgba(29,158,117,0.08);font-size:12px;font-weight:500;color:var(--accent2);cursor:pointer;transition:all .13s;}
+.loc-block-chip:hover{background:rgba(29,158,117,0.18);border-color:var(--accent2);}
+.loc-block-chip.active-chip{background:var(--accent2);color:#fff;border-color:var(--accent2);}
+.loc-block-chip .chip-dist{font-size:10px;opacity:.75;}
+.loc-non-hdb{font-size:12px;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-top:6px;line-height:1.6;}
+.loc-dismiss{height:26px;padding:0 9px;background:transparent;border:1px solid var(--border);border-radius:6px;font-size:11px;font-family:'DM Sans',sans-serif;color:var(--muted);cursor:pointer;white-space:nowrap;transition:all .13s;margin-left:auto;}
+.loc-dismiss:hover{border-color:var(--muted);color:var(--text);}
 </style>
 </head>
 <body>
@@ -473,6 +502,30 @@ footer a{color:var(--accent);text-decoration:none;}
       <span class="postal-fb hint" id="srch-postal-fb">Optional — auto-fills Town, Street &amp; Block</span>
       <button class="postal-clr" id="srch-postal-clr" onclick="postalClearSearch()">✕ Clear</button>
     </div>
+
+    <!-- ── LOCATION PANEL ── -->
+    <div class="loc-panel" id="loc-panel">
+      <div class="loc-panel-row">
+        <button class="loc-btn" id="loc-btn" onclick="locateMe()">📍 Use my location</button>
+        <span class="loc-status idle" id="loc-status">Finds your nearest HDB block and fills Town, Street &amp; Block</span>
+        <button class="loc-dismiss" id="loc-dismiss" onclick="locDismiss()" style="display:none;">✕ Clear</button>
+      </div>
+      <div class="loc-radius-row" id="loc-radius-row">
+        <span class="loc-radius-label">Search within:</span>
+        <button class="loc-radius-btn active" data-r="50"  onclick="setLocRadius(50,this)">50 m</button>
+        <button class="loc-radius-btn" data-r="100" onclick="setLocRadius(100,this)">100 m</button>
+        <button class="loc-radius-btn" data-r="200" onclick="setLocRadius(200,this)">200 m</button>
+        <button class="loc-radius-btn" data-r="300" onclick="setLocRadius(300,this)">300 m</button>
+        <button class="loc-radius-btn" data-r="500" onclick="setLocRadius(500,this)">500 m</button>
+      </div>
+      <div class="loc-results" id="loc-results">
+        <div class="loc-results-label" id="loc-results-label">Nearby HDB blocks</div>
+        <div class="loc-block-list" id="loc-block-list"></div>
+        <div class="loc-non-hdb" id="loc-non-hdb" style="display:none;"></div>
+      </div>
+    </div>
+    <!-- ── END LOCATION PANEL ── -->
+
     <div class="form-grid">
       <div class="form-group">
         <label>Town <span class="opt">(type or multi-select)</span></label>
@@ -1231,8 +1284,29 @@ const SHEET_URLS={
   townstreets:`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=townstreets`,
   median:`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=median`,
   avgprices:`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=avgprices`,
-  postalcodes:`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=hdb_with_postalcodes`
+  postalcodes:`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=hdb_with_postalcodes`,
+  onemaptoken:`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=api`
 };
+// ── OneMap token (loaded from api tab in Google Sheet) ─────────
+let ONEMAP_TOKEN=null;
+async function _loadOneMapToken(){
+  try{
+    const r=await fetch(SHEET_URLS.onemaptoken);
+    if(!r.ok){console.warn('[OneMap] Token sheet error '+r.status);return;}
+    const txt=await r.text();
+    if(txt.trim().startsWith('<')){console.warn('[OneMap] Token sheet not published as CSV');return;}
+    const rows=parseCSV(txt);
+    // Expects sheet columns: key, value — row with key=onemap_token
+    const row=rows.find(r=>(r.key||r.Key||Object.values(r)[0]||'').toString().toLowerCase().includes('token'));
+    if(row){
+      ONEMAP_TOKEN=row.value||row.Value||Object.values(row)[1]||null;
+      console.log('[OneMap] Token loaded ✓');
+    }else{
+      // Fallback: just take value from first data row second column
+      if(rows[0])ONEMAP_TOKEN=Object.values(rows[0])[1]||null;
+    }
+  }catch(e){console.warn('[OneMap] Token load failed:',e.message);}
+}
 // API KEY EXPIRES ~April 2027. Renew at https://data.gov.sg/signin
 const API_KEY='v2:6583329b681acd14995522c0666d4c0bbc417afdbe1a4f51390daa46548a223b:z2bzj3bIbgjvDYIisZ8Zw0j7uXNBqxqh';
 
@@ -1280,7 +1354,7 @@ let topDateMode='quick',topSelectedMonths=6;
 function parseCSV(text){const lines=text.trim().split('\n');if(lines.length<2)return[];const parseRow=line=>{const result=[],re=/("(?:[^"]|"")*"|[^,]*)/g;let m;while((m=re.exec(line))!==null){if(m.index===re.lastIndex)re.lastIndex++;let v=m[1];if(v.startsWith('"')&&v.endsWith('"'))v=v.slice(1,-1).replace(/""/g,'"');result.push(v);}return result;};const headers=parseRow(lines[0]);return lines.slice(1).map(l=>{const vals=parseRow(l);return Object.fromEntries(headers.map((h,i)=>[h,vals[i]||'']));});}
 
 // ── Load all data ──────────────────────────────────────────────
-async function loadAllData(){const statusEl=document.getElementById('data-load-msg');const form=document.getElementById('search-form');try{statusEl.innerHTML='Loading transactions...';const r1=await fetch(SHEET_URLS.resaletxn);if(!r1.ok)throw new Error(`Resale tab error ${r1.status}`);const resaleData=parseCSV(await r1.text());DB.resale=resaleData;statusEl.innerHTML=`Loaded ${resaleData.length.toLocaleString()} transactions. Loading street data...`;const r2=await fetch(SHEET_URLS.townstreets);if(!r2.ok)throw new Error(`Town streets tab error ${r2.status}`);const streetData=parseCSV(await r2.text());streetData.forEach(row=>{if(row.town&&row.streets)DB.townStreets[row.town]=row.streets.split('|').filter(Boolean).sort();});DB.loaded=true;document.getElementById('hero-txn-count').textContent=resaleData.length.toLocaleString()+'+';const lastUpdated=resaleData.reduce((max,r)=>r.month>max?r.month:max,'');document.getElementById('hero-updated').textContent=lastUpdated;form.style.opacity='1';form.style.pointerEvents='auto';document.getElementById('data-load-status').style.background='rgba(29,158,117,0.08)';document.getElementById('data-load-status').style.borderColor='rgba(29,158,117,0.25)';statusEl.innerHTML=`<strong style="color:var(--accent2)">${resaleData.length.toLocaleString()} transactions</strong> loaded. Ready to search`;buildTicker();evEnableForm();_loadPostalBg();
+async function loadAllData(){const statusEl=document.getElementById('data-load-msg');const form=document.getElementById('search-form');try{statusEl.innerHTML='Loading transactions...';const r1=await fetch(SHEET_URLS.resaletxn);if(!r1.ok)throw new Error(`Resale tab error ${r1.status}`);const resaleData=parseCSV(await r1.text());DB.resale=resaleData;statusEl.innerHTML=`Loaded ${resaleData.length.toLocaleString()} transactions. Loading street data...`;const r2=await fetch(SHEET_URLS.townstreets);if(!r2.ok)throw new Error(`Town streets tab error ${r2.status}`);const streetData=parseCSV(await r2.text());streetData.forEach(row=>{if(row.town&&row.streets)DB.townStreets[row.town]=row.streets.split('|').filter(Boolean).sort();});DB.loaded=true;document.getElementById('hero-txn-count').textContent=resaleData.length.toLocaleString()+'+';const lastUpdated=resaleData.reduce((max,r)=>r.month>max?r.month:max,'');document.getElementById('hero-updated').textContent=lastUpdated;form.style.opacity='1';form.style.pointerEvents='auto';document.getElementById('data-load-status').style.background='rgba(29,158,117,0.08)';document.getElementById('data-load-status').style.borderColor='rgba(29,158,117,0.25)';statusEl.innerHTML=`<strong style="color:var(--accent2)">${resaleData.length.toLocaleString()} transactions</strong> loaded. Ready to search`;buildTicker();evEnableForm();_loadPostalBg();_loadOneMapToken();
   // Init price slider with actual max price from dataset
   const maxResalePrice=resaleData.reduce((m,r)=>Math.max(m,Number(r.resale_price)||0),0);
   const minResalePrice=resaleData.reduce((m,r)=>{const p=Number(r.resale_price)||0;return p>0?Math.min(m,p):m;},Infinity);
@@ -3456,6 +3530,262 @@ function postalClearEV(){
   if(inp)inp.value='';
   _postalFb('ev-postal-fb','ev-postal-clr','hint','Optional — auto-fills Town, Street &amp; Block');
 }
+
+// ══════════════════════════════════════════════════════════════
+//  LOCATION ENGINE — OneMap reverse geocode → HDB autofill
+// ══════════════════════════════════════════════════════════════
+let _locRadius=50;
+let _locCooldown=false;
+let _locDone=false;
+
+function setLocRadius(r,btn){
+  _locRadius=r;
+  document.querySelectorAll('.loc-radius-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+function locDismiss(){
+  // Reset the whole panel back to idle state
+  _locDone=false;
+  document.getElementById('loc-status').className='loc-status idle';
+  document.getElementById('loc-status').textContent='Finds your nearest HDB block and fills Town, Street & Block';
+  document.getElementById('loc-results').style.display='none';
+  document.getElementById('loc-block-list').innerHTML='';
+  document.getElementById('loc-non-hdb').style.display='none';
+  document.getElementById('loc-dismiss').style.display='none';
+  document.getElementById('loc-btn').disabled=false;
+}
+
+function _locStatus(type,msg){
+  const el=document.getElementById('loc-status');
+  el.className='loc-status '+type;
+  el.textContent=msg;
+}
+
+// Haversine distance in metres
+function _haversine(lat1,lon1,lat2,lon2){
+  const R=6371000,toR=Math.PI/180;
+  const dLat=(lat2-lat1)*toR,dLon=(lon2-lon1)*toR;
+  const a=Math.sin(dLat/2)**2+Math.cos(lat1*toR)*Math.cos(lat2*toR)*Math.sin(dLon/2)**2;
+  return Math.round(R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a)));
+}
+
+async function locateMe(){
+  // Cooldown guard
+  if(_locCooldown){_locStatus('err','Please wait a moment before trying again.');return;}
+  if(_locDone)return; // already filled, user must clear first
+
+  // Check OneMap token available
+  if(!ONEMAP_TOKEN){
+    _locStatus('unavail','📍 Location function currently unavailable — token not loaded. Run your pipeline first.');
+    return;
+  }
+
+  // Geolocation check
+  if(!navigator.geolocation){
+    _locStatus('err','Geolocation not supported by this browser.');
+    return;
+  }
+
+  // Start cooldown
+  _locCooldown=true;
+  setTimeout(()=>_locCooldown=false,10000);
+
+  const btn=document.getElementById('loc-btn');
+  btn.disabled=true;
+  document.getElementById('loc-dismiss').style.display='none';
+  document.getElementById('loc-results').style.display='none';
+  _locStatus('loading','📡 Getting your location…');
+
+  navigator.geolocation.getCurrentPosition(
+    pos=>_locProcess(pos.coords.latitude,pos.coords.longitude),
+    err=>{
+      btn.disabled=false;
+      const msgs={1:'Location access denied — please allow location in your browser.',2:'Location unavailable — try again.',3:'Location request timed out.'};
+      _locStatus('err',msgs[err.code]||'Could not get location.');
+    },
+    {timeout:10000,maximumAge:30000,enableHighAccuracy:true}
+  );
+}
+
+async function _locProcess(lat,lng){
+  const btn=document.getElementById('loc-btn');
+  _locStatus('loading','🗺️ Looking up address…');
+
+  try{
+    // OneMap reverse geocode
+    const url=`https://www.onemap.gov.sg/api/public/revgeocode?location=${lat},${lng}&token=${ONEMAP_TOKEN}&buffer=${_locRadius}&addressType=HDB&otherFeatures=N`;
+    const res=await fetch(url,{headers:{Authorization:`Bearer ${ONEMAP_TOKEN}`}});
+
+    if(!res.ok){
+      if(res.status===401){
+        _locStatus('unavail','📍 Location function currently unavailable — token expired. Please refresh your pipeline.');
+        btn.disabled=false;return;
+      }
+      throw new Error('OneMap API error '+res.status);
+    }
+
+    const data=await res.json();
+    const results=data.GeocodeInfo||[];
+
+    if(!results.length){
+      // No HDB found — show non-HDB message
+      _locNonHDB(lat,lng);
+      return;
+    }
+
+    // Filter to HDB results and compute distances
+    const withDist=results
+      .filter(r=>r.LATITUDE&&r.LONGITUDE)
+      .map(r=>({...r,dist:_haversine(lat,lng,parseFloat(r.LATITUDE),parseFloat(r.LONGITUDE))}))
+      .sort((a,b)=>a.dist-b.dist)
+      .slice(0,10); // max 10 blocks
+
+    if(!withDist.length){_locNonHDB(lat,lng);return;}
+
+    _locShowResults(withDist);
+
+  }catch(e){
+    console.error('[Location]',e);
+    _locStatus('err','Could not complete location lookup. Try again.');
+    btn.disabled=false;
+  }
+}
+
+function _locNonHDB(lat,lng){
+  const btn=document.getElementById('loc-btn');
+  _locStatus('ok',`📍 Located (${lat.toFixed(5)}, ${lng.toFixed(5)})`);
+  const nonHdb=document.getElementById('loc-non-hdb');
+  nonHdb.innerHTML=`<strong>No HDB block detected at your location.</strong> You may not be near an HDB estate, or try increasing the search radius above.`;
+  nonHdb.style.display='block';
+  document.getElementById('loc-results').style.display='block';
+  document.getElementById('loc-results-label').textContent='Location result';
+  document.getElementById('loc-dismiss').style.display='inline-block';
+  btn.disabled=false;
+}
+
+function _locShowResults(blocks){
+  const btn=document.getElementById('loc-btn');
+  const closest=blocks[0];
+
+  // Auto-fill with the closest block
+  _locAutoFill(closest);
+
+  // Show block chips for user to change if needed
+  const list=document.getElementById('loc-block-list');
+  list.innerHTML='';
+  blocks.forEach((b,i)=>{
+    const chip=document.createElement('button');
+    chip.className='loc-block-chip'+(i===0?' active-chip':'');
+    chip.innerHTML=`Blk ${b.BLOCK} ${b.ROAD} <span class="chip-dist">${b.dist}m</span>`;
+    chip.onclick=()=>{
+      document.querySelectorAll('.loc-block-chip').forEach(c=>c.classList.remove('active-chip'));
+      chip.classList.add('active-chip');
+      _locAutoFill(b);
+    };
+    list.appendChild(chip);
+  });
+
+  const label=blocks.length===1?'1 HDB block found nearby':
+    `${blocks.length} HDB blocks found — closest auto-filled, tap to switch`;
+  document.getElementById('loc-results-label').textContent=label;
+  document.getElementById('loc-results').style.display='block';
+  document.getElementById('loc-non-hdb').style.display='none';
+  document.getElementById('loc-dismiss').style.display='inline-block';
+
+  _locStatus('ok',`✅ Found: Blk ${closest.BLOCK} ${closest.ROAD} (${closest.dist}m away)`);
+  _locDone=true;
+  btn.disabled=false;
+}
+
+function _locAutoFill(block){
+  // Match block+street against DB.postalMap to get town
+  const streetUp=(block.ROAD||'').toUpperCase().trim();
+  const blockUp=(block.BLOCK||'').toUpperCase().trim();
+
+  // Try to find town via postalMap (match by street + block)
+  let town=null;
+  const postal=_locFindPostal(blockUp,streetUp);
+  if(postal){
+    const match=DB.postalMap[postal];
+    if(match)town=_resolveStreetToTown(streetUp);
+  }
+  if(!town)town=_resolveStreetToTown(streetUp);
+
+  if(!town){
+    _locStatus('ok',`📍 Blk ${block.BLOCK} ${block.ROAD} — town not matched, fill manually`);
+    return;
+  }
+
+  // Use existing postalFillSearch machinery if we have a postal, else direct fill
+  if(postal&&DB.postalMap[postal]){
+    postalFillSearch(postal);
+    // Also set the postal input visually
+    const inp=document.getElementById('srch-postal-input');
+    if(inp){inp.value=postal;const clr=document.getElementById('srch-postal-clr');if(clr)clr.style.display='inline';}
+    return;
+  }
+
+  // Direct fill via town→street→block cascade
+  _locDirectFill(town,streetUp,blockUp);
+}
+
+function _locFindPostal(block,street){
+  // Search postalMap in reverse: find postal by block+street match
+  for(const[postal,data]of Object.entries(DB.postalMap)){
+    if(data.block&&data.street&&
+       data.block.toUpperCase()===block&&
+       data.street.toUpperCase()===street) return postal;
+  }
+  return null;
+}
+
+function _resolveStreetToTown(streetUp){
+  for(const[town,streets]of Object.entries(DB.townStreets)){
+    if(streets.some(s=>s.toUpperCase()===streetUp))return town;
+  }
+  // Fallback: partial match
+  for(const[town,streets]of Object.entries(DB.townStreets)){
+    if(streets.some(s=>s.toUpperCase().includes(streetUp)||streetUp.includes(s.toUpperCase())))return town;
+  }
+  return null;
+}
+
+function _locDirectFill(town,street,block){
+  // Clear existing selections
+  document.querySelectorAll('#ms-town input[type=checkbox]').forEach(c=>c.checked=false);
+
+  // Set town
+  const townCb=Array.from(document.querySelectorAll('#ms-town input[type=checkbox]:not(#ms-town-all)'))
+    .find(c=>c.value.toUpperCase()===town.toUpperCase());
+  if(townCb){townCb.checked=true;updateTownLabel();syncMapFromDropdown();onTownChange();}
+
+  // Build street options then set street
+  const tsStreets=DB.townStreets[town]||[];
+  const rsStreets=[...new Set(DB.resale.filter(r=>r.town===town&&r.street_name).map(r=>r.street_name))];
+  buildStreetOptions([...new Set([...tsStreets,...rsStreets])].sort());
+  document.getElementById('street-combo-tags').innerHTML='';
+  document.getElementById('block-combo-tags').innerHTML='';
+
+  const sCb=Array.from(document.querySelectorAll('#ms-street-options input[type=checkbox]'))
+    .find(c=>c.value.toUpperCase()===street);
+  if(sCb){sCb.checked=true;renderComboTags('ms-street','street-combo-tags','street');}
+
+  // Build block options then set block
+  const blocks=[...new Set(
+    DB.resale.filter(r=>r.town===town&&r.street_name&&r.street_name.toUpperCase()===street&&r.block)
+    .map(r=>r.block)
+  )].sort((a,b)=>isNaN(a)||isNaN(b)?a.localeCompare(b):Number(a)-Number(b));
+  buildBlockOptions(blocks);
+
+  if(block){
+    const bCb=Array.from(document.querySelectorAll('#ms-block-options input[type=checkbox]'))
+      .find(c=>c.value.toUpperCase()===block);
+    if(bCb){bCb.checked=true;renderComboTags('ms-block','block-combo-tags','block');}
+  }
+  _refreshStoreyFromBlocks();_refreshStreetInfo();
+}
+// ── END LOCATION ENGINE ─────────────────────────────────────
 
 </script>
 </body>
