@@ -3691,10 +3691,40 @@ async function _locGotCoords(lat, lng){
       return;
     }
 
-    // Compute distances, sort, cap at 10
+    // ── Extract block number robustly from OneMap response ──
+    // OneMap GeocodeInfo fields: BLOCK, ROAD, BUILDINGNAME, POSTALCODE, SEARCHVAL
+    // For alphanumeric blocks (e.g. 96A), BLOCK may be "96A", "96 A", or ""
+    // SEARCHVAL is always the full address e.g. "96A LENGKOK BAHRU" — most reliable
+    function _extractBlock(r){
+      // 1. BLOCK field — strip spaces, uppercase
+      let blk = (r.BLOCK || '').toString().replace(/\s+/g,'').toUpperCase();
+      if(blk && /^[0-9]+[A-Z]?$/.test(blk)) return blk;
+
+      // 2. Parse from SEARCHVAL: first token before the street name
+      // SEARCHVAL format: "BLOCK STREET_NAME" e.g. "96A LENGKOK BAHRU"
+      const sv = (r.SEARCHVAL || '').toString().toUpperCase().trim();
+      const road = (r.ROAD || '').toString().toUpperCase().trim();
+      if(sv && road && sv.endsWith(road)){
+        blk = sv.slice(0, sv.length - road.length).trim().replace(/\s+/g,'');
+        if(blk && /^[0-9]+[A-Z]?$/.test(blk)) return blk;
+      }
+      // 3. First word of SEARCHVAL
+      if(sv){
+        blk = sv.split(' ')[0].trim();
+        if(/^[0-9]+[A-Z]?$/.test(blk)) return blk;
+      }
+      // 4. Fall back to raw BLOCK stripped of non-alphanumeric
+      return (r.BLOCK || '').toString().replace(/[^0-9A-Za-z]/g,'').toUpperCase() || '';
+    }
+
+    // Compute distances, sort, cap at 10 — attach extracted block
     const blocks = raw
       .filter(r => r.LATITUDE && r.LONGITUDE)
-      .map(r => ({...r, dist: _haversine(lat, lng, parseFloat(r.LATITUDE), parseFloat(r.LONGITUDE))}))
+      .map(r => ({
+        ...r,
+        BLOCK: _extractBlock(r),   // overwrite with clean block number
+        dist: _haversine(lat, lng, parseFloat(r.LATITUDE), parseFloat(r.LONGITUDE))
+      }))
       .sort((a, b) => a.dist - b.dist)
       .slice(0, 10);
 
@@ -3882,15 +3912,36 @@ function _locFill(blockNum, streetName){
   if(sCb){ sCb.checked = true; renderComboTags('ms-street','street-combo-tags','street'); }
 
   // ── Step 4: build block list from resale and select matching block ──
-  const blocks = [...new Set(
+  // Build block list — all blocks on this street from resale data
+  const allBlocksOnStreet = [...new Set(
     DB.resale
       .filter(r => r.town === town && r.street_name && r.street_name.toUpperCase() === matchedStreet && r.block)
       .map(r => r.block)
-  )].sort((a,b) => isNaN(a)||isNaN(b) ? a.localeCompare(b) : Number(a)-Number(b));
-  buildBlockOptions(blocks);
+  )].sort((a,b) => {
+    // Sort: numeric blocks first in numeric order, then alphanumeric
+    const na=parseInt(a), nb=parseInt(b);
+    if(!isNaN(na)&&!isNaN(nb)) return na-nb;
+    return a.localeCompare(b, undefined, {numeric:true});
+  });
+  buildBlockOptions(allBlocksOnStreet);
 
-  const bCb = [...document.querySelectorAll('#ms-block-options input[type=checkbox]')]
+  // ── Block matching: handles alphanumeric (96A), leading zeros (009 vs 9) ──
+  // Normalise: strip leading zeros from numeric part, keep letter suffix uppercase
+  function _normBlock(b){
+    const s = b.toUpperCase().replace(/\s+/g,'');
+    const m = s.match(/^0*([1-9][0-9]*)([A-Z]?)$/);  // e.g. "096A" → ["096A","96","A"]
+    if(m) return m[1] + m[2];                          // → "96A"
+    return s;
+  }
+  const normBlockUp = _normBlock(blockUp);
+
+  // Try exact match first, then normalised match
+  let bCb = [...document.querySelectorAll('#ms-block-options input[type=checkbox]')]
     .find(cb => cb.value.toUpperCase() === blockUp);
+  if(!bCb){
+    bCb = [...document.querySelectorAll('#ms-block-options input[type=checkbox]')]
+      .find(cb => _normBlock(cb.value) === normBlockUp);
+  }
   if(bCb){ bCb.checked = true; renderComboTags('ms-block','block-combo-tags','block'); }
 
   // ── Step 5: storey filter + street info ──
@@ -3899,8 +3950,9 @@ function _locFill(blockNum, streetName){
 
   // ── Step 6: status ──
   const displayStreet = sCb ? sCb.value : streetName;
+  const displayBlock  = bCb ? bCb.value : blockNum;
   if(bCb){
-    _locSetStatus('ok', `✅ <strong>Blk ${blockNum} ${displayStreet}</strong>, ${town} — filled`);
+    _locSetStatus('ok', `✅ <strong>Blk ${displayBlock} ${displayStreet}</strong>, ${town} — filled`);
   } else {
     _locSetStatus('warn', `✅ ${town} / ${displayStreet} filled. Blk ${blockNum} not in resale records — select manually.`);
   }
