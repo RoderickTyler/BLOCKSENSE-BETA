@@ -3767,33 +3767,34 @@ function _locFill(blockNum, streetName){
   const streetUp = streetName.toUpperCase().trim();
   const blockUp  = blockNum.toUpperCase().trim();
 
-  // 1. Resolve town from townStreets DB
+  // 1. Resolve town — exact match in townStreets first
   let town = null;
   for(const [t, streets] of Object.entries(DB.townStreets)){
     if(streets.some(s => s.toUpperCase() === streetUp)){ town = t; break; }
   }
-  // Fallback: partial match
+  // Fallback: check resale data directly
+  if(!town){
+    const match = DB.resale.find(r => r.street_name && r.street_name.toUpperCase() === streetUp);
+    if(match) town = match.town;
+  }
+  // Last resort: partial match
   if(!town){
     for(const [t, streets] of Object.entries(DB.townStreets)){
       if(streets.some(s => streetUp.includes(s.toUpperCase()) || s.toUpperCase().includes(streetUp))){ town = t; break; }
     }
   }
-  // Final fallback: derive from resale data
-  if(!town){
-    const match = DB.resale.find(r => r.street_name && r.street_name.toUpperCase() === streetUp);
-    if(match) town = match.town;
-  }
 
   if(!town){
-    _locSetStatus('warn', `⚠️ Blk ${blockNum} ${streetName} — town not matched. Fill Town manually then search.`);
+    _locSetStatus('warn', `⚠️ Blk ${blockNum} ${streetName} — town not matched. Fill Town manually.`);
     return;
   }
 
-  // 2. Clear existing town selection cleanly
+  // 2. Clear all town checkboxes
   document.querySelectorAll('#ms-town input[type=checkbox]').forEach(c => c.checked = false);
   document.getElementById('ms-town-all').checked = false;
 
-  // 3. Select the town
+  // 3. Check the matching town, then call onTownCheckChange which does
+  //    updateTownLabel + syncMapFromDropdown + onTownChange in one shot
   const townCb = Array.from(document.querySelectorAll('#ms-town input[type=checkbox]:not(#ms-town-all)'))
     .find(c => c.value === town);
   if(!townCb){
@@ -3801,37 +3802,30 @@ function _locFill(blockNum, streetName){
     return;
   }
   townCb.checked = true;
-  updateTownLabel();
-  syncMapFromDropdown();
+  onTownCheckChange(); // rebuilds street+block lists, updates label+map
 
-  // 4. onTownChange rebuilds street + block option lists synchronously
-  onTownChange();
-
-  // 5. Now select the street checkbox (options are now rendered by onTownChange)
+  // 4. Select the street (rendered by onTownCheckChange → onTownChange)
   const streetCb = Array.from(document.querySelectorAll('#ms-street-options input[type=checkbox]'))
     .find(c => c.value.toUpperCase() === streetUp);
   if(streetCb){
     streetCb.checked = true;
     renderComboTags('ms-street', 'street-combo-tags', 'street');
-    // onStreetChange filters blocks to this street
-    onStreetChange();
+    onStreetChange(); // filters block list to this street
   }
 
-  // 6. Select the block checkbox (options filtered by onStreetChange)
-  // Small timeout so onStreetChange's DOM rebuild settles
+  // 5. Select block after short settle (onStreetChange rebuilds block options)
   setTimeout(() => {
     const blockCb = Array.from(document.querySelectorAll('#ms-block-options input[type=checkbox]'))
       .find(c => c.value.toUpperCase() === blockUp);
     if(blockCb){
       blockCb.checked = true;
       renderComboTags('ms-block', 'block-combo-tags', 'block');
-      onBlockChange();  // triggers storey filter
+      onBlockChange(); // triggers storey filter
     } else {
-      // Block not in resale data — still street + town filled, warn
       _locSetStatus('warn', `✅ ${town} / ${streetName} filled. Blk ${blockNum} not in resale records — select manually.`);
     }
     _refreshStreetInfo();
-  }, 60);
+  }, 80);
 }
 // ══ END LOCATION ENGINE ═══════════════════════════════════════
 
