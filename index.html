@@ -1299,14 +1299,19 @@ let ONEMAP_TOKEN=null;
 async function _loadOneMapToken(){
   try{
     const r=await fetch(SHEET_URLS.onemaptoken);
-    if(!r.ok)return;
+    if(!r.ok){console.warn('[OneMap] Token sheet error '+r.status);return;}
     const txt=await r.text();
-    if(txt.trim().startsWith('<'))return;
+    if(txt.trim().startsWith('<')){console.warn('[OneMap] Token sheet not published as CSV');return;}
     const rows=parseCSV(txt);
-    // Expects row with key=onemap_token, value=<token>
-    const row=rows.find(r=>(Object.values(r)[0]||'').toString().toLowerCase().includes('token'));
-    ONEMAP_TOKEN=row?Object.values(row)[1]||null:(rows[0]?Object.values(rows[0])[1]||null:null);
-    if(ONEMAP_TOKEN)console.log('[OneMap] Token loaded ✓');
+    // Expects sheet columns: key, value — row with key=onemap_token
+    const row=rows.find(r=>(r.key||r.Key||Object.values(r)[0]||'').toString().toLowerCase().includes('token'));
+    if(row){
+      ONEMAP_TOKEN=row.value||row.Value||Object.values(row)[1]||null;
+      console.log('[OneMap] Token loaded ✓');
+    }else{
+      // Fallback: just take value from first data row second column
+      if(rows[0])ONEMAP_TOKEN=Object.values(rows[0])[1]||null;
+    }
   }catch(e){console.warn('[OneMap] Token load failed:',e.message);}
 }
 // API KEY EXPIRES ~April 2027. Renew at https://data.gov.sg/signin
@@ -3657,7 +3662,7 @@ async function _locGotCoords(lat, lng){
   _locSetStatus('loading', '🗺️ Searching for nearby HDB blocks…');
   try{
     const url = `https://www.onemap.gov.sg/api/public/revgeocode?location=${lat},${lng}&token=${ONEMAP_TOKEN}&buffer=${_locRadius}&addressType=HDB&otherFeatures=N`;
-    const res = await fetch(url);
+    const res=await fetch(url,{headers:{Authorization:`Bearer ${ONEMAP_TOKEN}`}});
 
     if(!res.ok){
       if(res.status === 401){
