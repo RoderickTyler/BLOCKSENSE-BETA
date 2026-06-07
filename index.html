@@ -501,7 +501,7 @@ footer a{color:var(--accent);text-decoration:none;}
       <span class="postal-icon">📮</span>
       <span class="postal-label">Postal Code</span>
       <input class="postal-input" type="text" id="srch-postal-input" maxlength="6"
-        placeholder="e.g. 310123" oninput="postalFillSearch(this.value)" autocomplete="off"/>
+        placeholder="e.g. 310123" oninput="postalFillSearch(this.value);setTimeout(_locCheckConflict,80)" autocomplete="off"/>
       <span class="postal-fb hint" id="srch-postal-fb">Optional — auto-fills Town, Street &amp; Block</span>
       <button class="postal-clr" id="srch-postal-clr" onclick="postalClearSearch()">✕ Clear</button>
     </div>
@@ -3601,13 +3601,16 @@ function locReset(){
   _locSetStatus('idle', 'Finds your nearest HDB block and auto-fills Town, Street &amp; Block');
 }
 
-// ── Intercept postalFillSearch to detect conflicts ─────────────
-// Wrap original so location conflict banner appears when postal is typed after location
-const _origPostalFillSearch = postalFillSearch;
-function postalFillSearch(raw){
-  _origPostalFillSearch(raw);
-  // Small delay so postal fb class updates first
-  setTimeout(_locCheckConflict, 80);
+// ── Conflict check when postal is typed ────────────────────────
+// Hooks into postalFillSearch via the oninput handler — no function redeclaration needed
+function _locCheckConflict(){
+  const conflict = document.getElementById('loc-conflict');
+  if(!conflict) return;
+  if(_postalIsActive() && _locActive){
+    conflict.style.display = 'block';
+  } else {
+    conflict.style.display = 'none';
+  }
 }
 
 // ── Main entry point ────────────────────────────────────────────
