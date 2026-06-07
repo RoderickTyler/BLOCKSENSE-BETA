@@ -527,7 +527,9 @@ footer a{color:var(--accent);text-decoration:none;}
         <div class="loc-non-hdb" id="loc-non-hdb" style="display:none;"></div>
       </div>
       <div class="loc-conflict" id="loc-conflict">
-        ⚠️ Postal code and location are both active. <strong>Postal code takes priority.</strong>
+        ⚠️ Both postal code and location are active.
+        <strong>Postal code takes priority for search.</strong><br>
+        <button onclick="locClearPostal()">Clear postal</button>
         <button onclick="locClearConflict()">Clear location</button>
       </div>
     </div>
@@ -3589,8 +3591,16 @@ function _locCheckConflict(){
 }
 
 function locClearConflict(){
-  // User chose to clear location (postal stays)
+  // User chose to clear location — postal stays, fields remain from postal
   locReset();
+}
+
+function locClearPostal(){
+  // User chose to clear postal — location fill stays
+  const inp = document.getElementById('srch-postal-input');
+  if(inp) inp.value = '';
+  _postalFb('srch-postal-fb','srch-postal-clr','hint','Optional — auto-fills Town, Street &amp; Block');
+  document.getElementById('loc-conflict').style.display = 'none';
 }
 
 // ── Reset the whole panel ──────────────────────────────────────
@@ -3760,72 +3770,73 @@ function _locChipClick(chip, block){
   _locSetStatus('ok', `✅ Blk ${block.BLOCK} ${block.ROAD} filled (${block.dist}m away)`);
 }
 
-// ── Core fill: town → street → block via existing combo engine ──
+// ── Core fill: mirrors postalFillSearch exactly ──────────────
+// OneMap returns ROAD (street name) and BLOCK — bridge to DB format the
+// same way postal does: townStreets for town, resale for block list
 function _locFill(blockNum, streetName){
   if(!DB.loaded) return;
 
   const streetUp = streetName.toUpperCase().trim();
   const blockUp  = blockNum.toUpperCase().trim();
 
-  // 1. Resolve town — exact match in townStreets first
-  let town = null;
-  for(const [t, streets] of Object.entries(DB.townStreets)){
-    if(streets.some(s => s.toUpperCase() === streetUp)){ town = t; break; }
-  }
-  // Fallback: check resale data directly
+  // ── Step 1: resolve town (same logic as _postalResolve) ──
+  // Exact match in townStreets first (authoritative)
+  let town = Object.keys(DB.townStreets).find(t =>
+    (DB.townStreets[t]||[]).some(s => s.toUpperCase() === streetUp)
+  ) || '';
+  // Fallback: resale data — street_name there matches our DB exactly
   if(!town){
-    const match = DB.resale.find(r => r.street_name && r.street_name.toUpperCase() === streetUp);
-    if(match) town = match.town;
-  }
-  // Last resort: partial match
-  if(!town){
-    for(const [t, streets] of Object.entries(DB.townStreets)){
-      if(streets.some(s => streetUp.includes(s.toUpperCase()) || s.toUpperCase().includes(streetUp))){ town = t; break; }
-    }
+    const hit = DB.resale.find(r => r.street_name && r.street_name.toUpperCase() === streetUp && r.town);
+    if(hit) town = hit.town;
   }
 
   if(!town){
-    _locSetStatus('warn', `⚠️ Blk ${blockNum} ${streetName} — town not matched. Fill Town manually.`);
+    _locSetStatus('warn', `⚠️ Street "${streetName}" not matched to any town. Try typing the town manually.`);
     return;
   }
 
-  // 2. Clear all town checkboxes
-  document.querySelectorAll('#ms-town input[type=checkbox]').forEach(c => c.checked = false);
-  document.getElementById('ms-town-all').checked = false;
+  // ── Step 2: fill town checkbox (same as postalFillSearch) ──
+  document.querySelectorAll('#ms-town input[type=checkbox]:not(#ms-town-all)').forEach(cb => { cb.checked = false; });
+  const tCb = document.querySelector('#ms-town input[value="'+CSS.escape(town)+'"]');
+  if(tCb) tCb.checked = true;
+  updateTownLabel();
+  syncMapFromDropdown();
 
-  // 3. Check the matching town, then call onTownCheckChange which does
-  //    updateTownLabel + syncMapFromDropdown + onTownChange in one shot
-  const townCb = Array.from(document.querySelectorAll('#ms-town input[type=checkbox]:not(#ms-town-all)'))
-    .find(c => c.value === town);
-  if(!townCb){
-    _locSetStatus('warn', `⚠️ Town "${town}" not found in dropdown. Fill manually.`);
-    return;
+  // ── Step 3: build street list and select matching street ──
+  // (mirrors postalFillSearch: combine townStreets + resale streets)
+  const tsStreets = DB.townStreets[town] || [];
+  const rsStreets = [...new Set(DB.resale.filter(r => r.town === town && r.street_name).map(r => r.street_name))];
+  buildStreetOptions([...new Set([...tsStreets, ...rsStreets])].sort());
+  document.getElementById('street-combo-tags').innerHTML = '';
+  document.getElementById('block-combo-tags').innerHTML  = '';
+
+  const sCb = [...document.querySelectorAll('#ms-street-options input[type=checkbox]')]
+    .find(cb => cb.value.toUpperCase() === streetUp);
+  if(sCb){ sCb.checked = true; renderComboTags('ms-street','street-combo-tags','street'); }
+
+  // ── Step 4: build block list from resale and select matching block ──
+  // (mirrors postalFillSearch exactly)
+  const blocks = [...new Set(
+    DB.resale
+      .filter(r => r.town === town && r.street_name && r.street_name.toUpperCase() === streetUp && r.block)
+      .map(r => r.block)
+  )].sort((a,b) => isNaN(a)||isNaN(b) ? a.localeCompare(b) : Number(a)-Number(b));
+  buildBlockOptions(blocks);
+
+  const bCb = [...document.querySelectorAll('#ms-block-options input[type=checkbox]')]
+    .find(cb => cb.value.toUpperCase() === blockUp);
+  if(bCb){ bCb.checked = true; renderComboTags('ms-block','block-combo-tags','block'); }
+
+  // ── Step 5: update storey filter and street info (same as postalFillSearch) ──
+  _refreshStoreyFromBlocks();
+  _refreshStreetInfo();
+
+  // ── Step 6: status message ──
+  if(bCb){
+    _locSetStatus('ok', `✅ <strong>Blk ${blockNum} ${streetName}</strong>, ${town} — filled from location`);
+  } else {
+    _locSetStatus('warn', `✅ ${town} / ${streetName} filled. Blk ${blockNum} not in resale records — select manually.`);
   }
-  townCb.checked = true;
-  onTownCheckChange(); // rebuilds street+block lists, updates label+map
-
-  // 4. Select the street (rendered by onTownCheckChange → onTownChange)
-  const streetCb = Array.from(document.querySelectorAll('#ms-street-options input[type=checkbox]'))
-    .find(c => c.value.toUpperCase() === streetUp);
-  if(streetCb){
-    streetCb.checked = true;
-    renderComboTags('ms-street', 'street-combo-tags', 'street');
-    onStreetChange(); // filters block list to this street
-  }
-
-  // 5. Select block after short settle (onStreetChange rebuilds block options)
-  setTimeout(() => {
-    const blockCb = Array.from(document.querySelectorAll('#ms-block-options input[type=checkbox]'))
-      .find(c => c.value.toUpperCase() === blockUp);
-    if(blockCb){
-      blockCb.checked = true;
-      renderComboTags('ms-block', 'block-combo-tags', 'block');
-      onBlockChange(); // triggers storey filter
-    } else {
-      _locSetStatus('warn', `✅ ${town} / ${streetName} filled. Blk ${blockNum} not in resale records — select manually.`);
-    }
-    _refreshStreetInfo();
-  }, 80);
 }
 // ══ END LOCATION ENGINE ═══════════════════════════════════════
 
